@@ -53,7 +53,8 @@ npm run dev
 | --- | --- | --- |
 | `DATABASE_URL` | yes | Postgres connection string. **Required at build time** – `src/db/index.ts` throws if it's missing. |
 | `GEMINI_API_KEY` | for generating cards | Without it the app shows a setup screen instead of the upload form. |
-| `GEMINI_MODEL` | no | Overrides the main model. Default main model is `gemini-3.6-flash`. If it isn't available for your key **or hits its usage limit (429 / quota exceeded)**, the app automatically tries the next model: `gemini-2.5-flash` → `gemini-2.0-flash` → `gemini-1.5-flash`. If *every* model is rate-limited it returns a 429 with a "wait a few minutes" message. |
+| `GEMINI_MODEL` | no | Overrides the main model. Default main model is `gemini-3.6-flash`, which fails over to `gemini-2.5-flash` → `gemini-2.0-flash` → `gemini-1.5-flash` when it isn't available for your key **or when it hits its rate limit** — see [Gemini model failover](#gemini-model-failover-rate-limits). |
+| `GEMINI_RATE_LIMIT_COOLDOWN_SECONDS` | no | How long a rate-limited model is skipped before being tried again (default `300`). Google's own `retryDelay` hint wins when the API sends one; the value is clamped to 15 s–30 min and doubles on repeated hits. |
 | `AUTH_SECRET` | for sign-in | Auth.js secret. Generate: `openssl rand -base64 32`. |
 | `AUTH_GOOGLE_ID` | for sign-in | Google OAuth client ID. |
 | `AUTH_GOOGLE_SECRET` | for sign-in | Google OAuth client secret. |
@@ -61,6 +62,43 @@ npm run dev
 
 > ⚠️ Never commit `.env`. It is listed in `.gitignore`; if it was ever pushed,
 > rotate the API key.
+
+## Gemini model failover (rate limits)
+
+Generation never fails just because one model is busy. `src/lib/gemini.ts`
+tries the models in order —
+
+`GEMINI_MODEL` (default `gemini-3.6-flash`) → `gemini-2.5-flash` →
+`gemini-2.0-flash` → `gemini-1.5-flash`
+
+— and moves to the next one when a model:
+
+- **hits its rate limit or quota** (HTTP 429 — "You exceeded your current
+  quota", "Resource has been exhausted (e.g. check quota)", or Google's
+  "model is overloaded"), or
+- **isn't available for your API key** (HTTP 404 / "not a valid model").
+
+Anything else (a 400 bad request, a safety block, a network failure) is
+rethrown straight away, because another model wouldn't fix it.
+
+Behaviour worth knowing:
+
+- **The switch is remembered.** A model that just ran out of quota is skipped
+  for a cooldown window instead of being retried on every upload, so no
+  request is wasted on it. Google's `retryDelay` hint is used when present,
+  otherwise `GEMINI_RATE_LIMIT_COOLDOWN_SECONDS` (default 5 minutes); the
+  window doubles each time the same model fails again in a row and is capped
+  at 30 minutes. When it expires the primary model is tried first again — the
+  app switches back on its own.
+- **The user is told.** `POST /api/scan` returns the model that produced the
+  cards in `model`, plus a human-readable `notice` when it had to switch
+  ("gemini-3.6-flash hit its request limit — generated with gemini-2.5-flash
+  instead."), which the UI shows as a toast.
+- **When every model is at its limit**, the endpoint answers **429** with
+  "Every Gemini model is at its request limit right now … please try again"
+  rather than a generic 500.
+- The cooldown notes live in module memory — one map per server instance, the
+  same trade-off as the request rate limiter in `src/lib/rate-limit.ts`.
 
 ## Database setup
 
@@ -228,6 +266,15 @@ npm run build && npm run start          # or: npm run dev
 BASE_URL=http://127.0.0.1:3000 npm run test:e2e
 ```
 
+Two suites need neither a database nor an API key and cover the model
+failover described above:
+
+```bash
+npm run test:gemini   # src/lib/gemini.ts driven with SDK-shaped 429/404 errors
+npm run test:scan     # the whole POST /api/scan handler, with the real
+                      # @google/generative-ai SDK pointed at a fake endpoint
+```
+
 `scripts/seed-demo-stats.mjs` seeds a demo user with decks + study history
 and prints a session cookie you can paste into the browser console to view
 the Stats tab in a preview environment where Google sign-in can't complete.
@@ -305,6 +352,8 @@ npm run typecheck   # tsc --noEmit
 npm run db:generate # generate a new migration from src/db/schema.ts
 npm run db:migrate  # apply committed migrations to DATABASE_URL
 npm run db:setup-test # create/reset the local test db + apply migrations
+npm run test:gemini # model-failover unit tests (no db, no network)
+npm run test:scan   # /api/scan failover tests (real SDK, fake Google endpoint)
 npm run test:e2e    # auth/stats e2e suite (minted JWTs, real HTTP)
 ```
 
@@ -313,16 +362,11 @@ npm run test:e2e    # auth/stats e2e suite (minted JWTs, real HTTP)
 - **AI generation is sign-in-only** and rate-limited to 10 requests per 10
   minutes per user on `/api/scan` (soft limit, per server instance) so nobody
   can burn your Gemini free tier.
-- **Automatic model fallback**: if the main Gemini model is unavailable for
-  your key or returns a rate-limit/quota error (429), `/api/scan` retries the
-  next model in the chain (`gemini-2.5-flash` → `gemini-2.0-flash` →
-  `gemini-1.5-flash`) so a rate-limited main model doesn't break generation.
-  The response reports which model served it (`model`, `usedFallback`), and
-  the app shows a toast when a fallback model was used. If every model is
-  rate-limited (e.g. the shared free-tier daily quota is exhausted) the user
-  gets a clear 429 "wait a few minutes" message.
 - `GET /api/config` tells the frontend whether `GEMINI_API_KEY` is set, so the
   app shows the setup screen instead of a broken upload form.
+- When a model hits its rate limit, generation **automatically moves to the
+  next available model** instead of failing — see [Gemini model
+  failover](#gemini-model-failover-rate-limits).
 - `GET /api/health` also pings the database (returns 503 when the DB is down)
   and reports whether maintenance mode is on.
 - Generated-but-unsaved decks are kept in `localStorage`; the Upload tab shows
