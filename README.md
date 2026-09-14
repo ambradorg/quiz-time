@@ -53,7 +53,7 @@ npm run dev
 | --- | --- | --- |
 | `DATABASE_URL` | yes | Postgres connection string. **Required at build time** – `src/db/index.ts` throws if it's missing. |
 | `GEMINI_API_KEY` | for generating cards | Without it the app shows a setup screen instead of the upload form. |
-| `GEMINI_MODEL` | no | Overrides the main model. Default main model is `gemini-3.6-flash`, which fails over to `gemini-2.5-flash` → `gemini-2.0-flash` → `gemini-1.5-flash` when it isn't available for your key **or when it hits its rate limit** — see [Gemini model failover](#gemini-model-failover-rate-limits). |
+| `GEMINI_MODEL` | no | Overrides the main model. Default main model is `gemini-3.6-flash`, which fails over to `gemini-3.1-flash-lite` → `antigravity` → `gemini-3.5-flash-lite` when it isn't available for your key **or when it hits its rate limit** — see [Gemini model failover](#gemini-model-failover-rate-limits). |
 | `GEMINI_RATE_LIMIT_COOLDOWN_SECONDS` | no | How long a rate-limited model is skipped before being tried again (default `300`). Google's own `retryDelay` hint wins when the API sends one; the value is clamped to 15 s–30 min and doubles on repeated hits. |
 | `AUTH_SECRET` | for sign-in | Auth.js secret. Generate: `openssl rand -base64 32`. |
 | `AUTH_GOOGLE_ID` | for sign-in | Google OAuth client ID. |
@@ -68,8 +68,8 @@ npm run dev
 Generation never fails just because one model is busy. `src/lib/gemini.ts`
 tries the models in order —
 
-`GEMINI_MODEL` (default `gemini-3.6-flash`) → `gemini-2.5-flash` →
-`gemini-2.0-flash` → `gemini-1.5-flash`
+`GEMINI_MODEL` (default `gemini-3.6-flash`) → `gemini-3.1-flash-lite` →
+`antigravity` → `gemini-3.5-flash-lite`
 
 — and moves to the next one when a model:
 
@@ -92,8 +92,8 @@ Behaviour worth knowing:
   app switches back on its own.
 - **The user is told.** `POST /api/scan` returns the model that produced the
   cards in `model`, plus a human-readable `notice` when it had to switch
-  ("gemini-3.6-flash hit its request limit — generated with gemini-2.5-flash
-  instead."), which the UI shows as a toast.
+  ("gemini-3.6-flash hit its request limit — generated with
+  gemini-3.1-flash-lite instead."), which the UI shows as a toast.
 - **When every model is at its limit**, the endpoint answers **429** with
   "Every Gemini model is at its request limit right now … please try again"
   rather than a generic 500.

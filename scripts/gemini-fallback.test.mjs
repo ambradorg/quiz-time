@@ -302,12 +302,12 @@ describe("when no model can serve the request", () => {
 
 describe("GEMINI_MODEL override", () => {
   test("the configured model is tried first", async () => {
-    process.env.GEMINI_MODEL = "gemini-2.5-flash";
+    process.env.GEMINI_MODEL = "custom-model";
     const { generate, calls } = stub(() => OK_RESULT);
     const outcome = await generateWithFallback(generate, PARTS);
 
-    assert.deepEqual(calls, ["gemini-2.5-flash"]);
-    assert.equal(outcome.model, "gemini-2.5-flash");
+    assert.deepEqual(calls, ["custom-model"]);
+    assert.equal(outcome.model, "custom-model");
   });
 
   test("a custom model still fails over to the built-in fallbacks", async () => {

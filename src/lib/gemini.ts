@@ -44,7 +44,11 @@ export const PRIMARY_MODEL = "gemini-3.6-flash";
  * Tried in order when the primary can't serve the request — either because it
  * isn't available for the key or because its rate limit is exhausted.
  */
-export const FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+export const FALLBACK_MODELS = [
+  "gemini-3.1-flash-lite",
+  "antigravity",
+  "gemini-3.5-flash-lite",
+];
 
 /** How long a rate-limited model is skipped before being tried again. */
 const DEFAULT_COOLDOWN_MS = 5 * 60 * 1000;
