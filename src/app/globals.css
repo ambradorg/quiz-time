@@ -157,9 +157,17 @@ body {
 .animate-fade-in { animation: fadeIn 0.4s ease both; }
 .animate-slide-up { animation: slideUp 0.5s ease both; }
 .animate-pop { animation: pop 0.3s ease; }
-.animate-heartbeat { animation: heartbeat 2.6s ease-in-out infinite; }
+.animate-heartbeat {
+  animation: heartbeat 2.6s ease-in-out infinite;
+  /* Promote to a composited layer: without this, every scale frame repaints
+     the whole shadowed clay card and visibly flickers on older iPhones. */
+  will-change: transform;
+}
 .animate-shake { animation: shake 0.4s ease; }
-.animate-float { animation: floaty 3s ease-in-out infinite; }
+.animate-float {
+  animation: floaty 3s ease-in-out infinite;
+  will-change: transform;
+}
 .animate-squish { animation: squish 0.35s ease; }
 
 .shimmer {
