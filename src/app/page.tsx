@@ -4,6 +4,12 @@ import { useState, useEffect, useRef, useCallback, type ReactNode } from "react"
 import { useSession, signIn, signOut } from "next-auth/react";
 import { LoginPage } from "@/components/login-page";
 import {
+  extractPdfText,
+  isPasswordProtectedPdf,
+  PDF_TEXT_CHAR_LIMIT,
+  PDF_MIN_TEXT_CHARS,
+} from "@/lib/pdf-text";
+import {
   ArrowLeft,
   ArrowRight,
   BookBookmark,
@@ -767,6 +773,16 @@ const MAX_FILES = 8;
 const MAX_TOTAL_MB = 50;
 const MAX_UPLOAD_MB = 50;
 
+// Serverless hosts (Vercel) reject request bodies over ~4.5 MB with a 413,
+// so PDFs are parsed to text in the browser once this direct-upload budget
+// is used up — only the extracted text (a few hundred KB) is sent instead.
+// Images are exempt: they're compressed before upload and need Gemini's
+// vision anyway.
+const PDF_DIRECT_UPLOAD_BUDGET = 4 * 1024 * 1024;
+// Absolute ceiling for sending raw file bytes; beyond this the request is
+// guaranteed to 413, so prefer a clear error message over a doomed upload.
+const DIRECT_UPLOAD_HARD_CAP = 4.4 * 1024 * 1024;
+
 function formatSize(bytes: number): string {
   return bytes >= 1024 * 1024
     ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
@@ -803,6 +819,7 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
   const [dragOver, setDragOver] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [statusText, setStatusText] = useState("");
   const [textInput, setTextInput] = useState("");
   const [mode, setMode] = useState<"file" | "text">("file");
   const [picked, setPicked] = useState<PickedFile[]>([]);
@@ -901,6 +918,7 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
 
   const handleSubmit = async () => {
     setError("");
+    setStatusText("");
     setLoading(true);
 
     try {
@@ -928,10 +946,77 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
           }
         }
 
+        // PDFs whose bytes no longer fit the direct-upload budget are parsed
+        // to text right here in the browser; the text is sent instead of the
+        // (multi-MB) file. Smaller PDFs still go as files so Gemini can see
+        // diagrams and layout.
+        let directBytes = 0;
+        let truncatedText = false;
+        const textChunks: string[] = [];
+
         for (const item of picked) {
+          const pdfNeedsText =
+            item.kind === "PDF" && directBytes + item.file.size > PDF_DIRECT_UPLOAD_BUDGET;
+
+          if (pdfNeedsText) {
+            let text = "";
+            try {
+              text = await extractPdfText(item.file, (page, total) => {
+                setStatusText(`Reading "${item.file.name}" — page ${page} of ${total}...`);
+              });
+            } catch (err) {
+              if (isPasswordProtectedPdf(err)) {
+                throw new Error(`"${item.file.name}" is password-protected. Remove the password and try again.`);
+              }
+              // Old browser or a pdf.js hiccup — if the file still fits under
+              // the hard cap, upload it directly like before.
+              if (directBytes + item.file.size <= DIRECT_UPLOAD_HARD_CAP) {
+                formData.append("file", item.file);
+                directBytes += item.file.size;
+                continue;
+              }
+              throw new Error(
+                `Couldn't read "${item.file.name}" (${formatSize(item.file.size)}) in this browser. Try a smaller PDF, or upload photos of the pages.`
+              );
+            }
+
+            if (text.replace(/\s/g, "").length < PDF_MIN_TEXT_CHARS) {
+              // No text layer: it's a scan/photo PDF. Vision can still read
+              // it if the bytes fit; otherwise it simply can't be uploaded.
+              if (directBytes + item.file.size <= DIRECT_UPLOAD_HARD_CAP) {
+                formData.append("file", item.file);
+                directBytes += item.file.size;
+                continue;
+              }
+              throw new Error(
+                `"${item.file.name}" looks like a scanned PDF (no selectable text) and at ${formatSize(
+                  item.file.size
+                )} it's too large to upload as-is. Split it into a smaller file, or upload photos of the key pages.`
+              );
+            }
+
+            if (text.length > PDF_TEXT_CHAR_LIMIT) {
+              text = text.slice(0, PDF_TEXT_CHAR_LIMIT);
+              truncatedText = true;
+            }
+            textChunks.push(`--- PDF text: ${item.file.name} ---\n${text}`);
+            continue;
+          }
+
           const optimized = await compressImage(item.file);
           formData.append("file", optimized);
+          directBytes += optimized.size;
         }
+
+        if (textChunks.length > 0) {
+          let joined = textChunks.join("\n\n");
+          if (joined.length > PDF_TEXT_CHAR_LIMIT) {
+            joined = joined.slice(0, PDF_TEXT_CHAR_LIMIT);
+            truncatedText = true;
+          }
+          formData.append("text", joined);
+        }
+        setStatusText(truncatedText ? "Long PDF — using the first ~100k characters..." : "");
 
         const pdfs = picked.filter((item) => item.kind === "PDF").length;
         const words = picked.filter((item) => item.kind === "Word").length;
@@ -956,18 +1041,34 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
       }
 
       const res = await fetch("/api/scan", { method: "POST", body: formData });
-      const data = await res.json();
 
-      if (!res.ok || data.error) {
-        throw new Error(data.error || "Failed to process content");
+      // The body may not be JSON (e.g. a host-level 413 page), so parse
+      // defensively instead of crashing with "not valid JSON".
+      const raw = await res.text();
+      let data: { error?: string; cards?: Flashcard[]; title?: string; summary?: string } | null = null;
+      if (raw) {
+        try { data = JSON.parse(raw); } catch { data = null; }
+      }
+      if (!res.ok || !data || data.error) {
+        const sizeHint =
+          res.status === 413
+            ? " — that upload is too large for the server to accept. Remove a few files or use smaller ones."
+            : "";
+        throw new Error(
+          data?.error || `The upload failed (HTTP ${res.status}${sizeHint || ""}). Please try again.`
+        );
+      }
+      if (!data.cards) {
+        throw new Error("No flashcards were generated from this content");
       }
 
-      onCardsReady(data.cards, data.title, data.summary, sourceType);
+      onCardsReady(data.cards, data.title || "Study Set", data.summary || "", sourceType);
       showToast(`Generated ${data.cards.length} flashcards!`, PartyPopper);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setLoading(false);
+      setStatusText("");
     }
   };
 
@@ -983,7 +1084,7 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
         </span>
       </h2>
       <p style={{ color: "var(--text-muted)", margin: "0 0 20px", fontSize: 14 }}>
-        Upload PDFs, Word docs, PowerPoints or photos — you can select several at once — or paste text!
+        Upload PDFs, Word docs, PowerPoints or photos — large PDFs are read right in your browser — or paste text!
       </p>
 
       {/* Mode toggle */}

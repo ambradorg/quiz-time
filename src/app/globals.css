@@ -127,9 +127,9 @@ body {
 }
 @keyframes heartbeat {
   0%, 100% { transform: scale(1); }
-  25% { transform: scale(1.1); }
-  50% { transform: scale(0.95); }
-  75% { transform: scale(1.05); }
+  30% { transform: scale(1.07); }
+  45% { transform: scale(0.99); }
+  60% { transform: scale(1.03); }
 }
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
@@ -157,9 +157,17 @@ body {
 .animate-fade-in { animation: fadeIn 0.4s ease both; }
 .animate-slide-up { animation: slideUp 0.5s ease both; }
 .animate-pop { animation: pop 0.3s ease; }
-.animate-heartbeat { animation: heartbeat 1.5s ease infinite; }
+.animate-heartbeat {
+  animation: heartbeat 2.6s ease-in-out infinite;
+  /* Promote to a composited layer: without this, every scale frame repaints
+     the whole shadowed clay card and visibly flickers on older iPhones. */
+  will-change: transform;
+}
 .animate-shake { animation: shake 0.4s ease; }
-.animate-float { animation: floaty 3s ease-in-out infinite; }
+.animate-float {
+  animation: floaty 3s ease-in-out infinite;
+  will-change: transform;
+}
 .animate-squish { animation: squish 0.35s ease; }
 
 .shimmer {
@@ -257,7 +265,6 @@ body {
   background: transparent;
   cursor: pointer;
 }
-.ios-install-close:hover { background: rgba(255, 255, 255, 0.18); }
 
 /* ── Buttons: chunky toy keys with a solid press edge ─────────────────────── */
 .btn {
@@ -291,15 +298,6 @@ body {
     0 5px 0 #1e40af,
     0 12px 24px rgba(37, 99, 235, 0.35);
 }
-.btn-primary:hover:not(:disabled) {
-  filter: brightness(1.06);
-  transform: translateY(-1px);
-  box-shadow:
-    inset 0 2px 3px rgba(255, 255, 255, 0.45),
-    inset 0 -4px 6px rgba(0, 0, 0, 0.18),
-    0 6px 0 #1e40af,
-    0 14px 26px rgba(37, 99, 235, 0.4);
-}
 .btn-primary:active:not(:disabled) {
   box-shadow:
     inset 0 2px 3px rgba(255, 255, 255, 0.45),
@@ -316,11 +314,6 @@ body {
     inset 0 -4px 8px rgba(43, 80, 180, 0.1),
     0 5px 0 #bfdbfe,
     0 10px 20px rgba(43, 80, 180, 0.18);
-}
-.btn-secondary:hover:not(:disabled) {
-  background: #f5f9ff;
-  border-color: var(--blue-light);
-  transform: translateY(-1px);
 }
 .btn-secondary:active:not(:disabled) {
   box-shadow:
@@ -393,7 +386,6 @@ body {
     0 6px 14px rgba(43, 80, 180, 0.12),
     inset 0 1px 2px rgba(255, 255, 255, 0.9);
 }
-.btn-ghost:hover:not(:disabled) { background: #ffffff; }
 .btn-ghost:active:not(:disabled) {
   transform: translateY(2px);
   box-shadow:
@@ -449,7 +441,7 @@ body {
   transition: all 0.25s ease;
   cursor: pointer;
 }
-.upload-zone:hover, .upload-zone.drag-over {
+.upload-zone.drag-over {
   border-color: var(--blue-dark);
   border-style: solid;
   background: #f5f9ff;
@@ -511,7 +503,7 @@ body {
   border: 4px solid #c9d8fa;
   border-top-color: var(--blue-dark);
   border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  animation: spin 1.1s linear infinite;
 }
 
 /* Toast — floats above the nav dock. */
@@ -539,6 +531,8 @@ body {
   gap: 8px;
   /* Slide in (~0.3s), hold, slide out — one animation, no JS state toggling. */
   animation: toast-in-out 3.1s ease forwards;
+  /* Status-only, must never swallow taps on buttons beneath it. */
+  pointer-events: none;
 }
 .toast svg { width: 17px; height: 17px; flex-shrink: 0; }
 
@@ -599,7 +593,6 @@ body {
   background: none;
   text-decoration: none;
 }
-.nav-item:hover { background: #eff4ff; }
 .nav-item.active {
   color: #ffffff;
   background: linear-gradient(180deg, #5b9cff, #2f6bee);
@@ -642,14 +635,6 @@ body {
   box-shadow: var(--clay-card-shadow);
   cursor: pointer;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-.mode-card:hover:not(:disabled) {
-  transform: translateY(-3px);
-  box-shadow:
-    0 18px 36px rgba(43, 80, 180, 0.22),
-    0 4px 10px rgba(43, 80, 180, 0.12),
-    inset 0 2px 4px rgba(255, 255, 255, 0.9),
-    inset 0 -6px 12px rgba(43, 80, 180, 0.08);
 }
 .mode-card:active:not(:disabled) {
   transform: scale(0.98) translateY(1px);
@@ -780,15 +765,6 @@ body {
   box-shadow:
     0 4px 0 #d8e6ff,
     0 8px 18px rgba(43, 80, 180, 0.1),
-    inset 0 1px 2px rgba(255, 255, 255, 0.9);
-}
-.choice:hover:not(:disabled) {
-  border-color: var(--blue-light);
-  background: #f5f9ff;
-  transform: translateY(-1px);
-  box-shadow:
-    0 5px 0 #bfdbfe,
-    0 10px 20px rgba(43, 80, 180, 0.14),
     inset 0 1px 2px rgba(255, 255, 255, 0.9);
 }
 .choice:active:not(:disabled) {
@@ -1052,7 +1028,6 @@ body {
   transition: background 0.15s ease, transform 0.15s ease;
   box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
 }
-.remove-btn:hover { background: rgba(15, 35, 63, 0.95); transform: scale(1.08); }
 .remove-btn svg { width: 14px; height: 14px; }
 
 /* ── Login page ──────────────────────────────────────────────────────────── */
@@ -1111,11 +1086,6 @@ body {
   font-weight: 800;
   gap: 10px;
 }
-.login-google:hover:not(:disabled) {
-  background: #f8fbff;
-  border-color: var(--blue-dark);
-  transform: translateY(-1px);
-}
 .login-google:active:not(:disabled) {
   box-shadow:
     inset 0 2px 3px rgba(255, 255, 255, 1),
@@ -1156,10 +1126,70 @@ body {
   .login-title { font-size: 22px; }
 }
 
+/* ── Hover styles: fine-pointer devices only ────────────────────────────────
+   On touch screens a :hover state sticks after the first tap, which causes
+   the dreaded "tap twice to activate" behavior and lingering glows. Keep all
+   hover affordances in this guarded block so coarse pointers never match. */
+@media (hover: hover) and (pointer: fine) {
+  .ios-install-close:hover { background: rgba(255, 255, 255, 0.18); }
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.06);
+    transform: translateY(-1px);
+    box-shadow:
+      inset 0 2px 3px rgba(255, 255, 255, 0.45),
+      inset 0 -4px 6px rgba(0, 0, 0, 0.18),
+      0 6px 0 #1e40af,
+      0 14px 26px rgba(37, 99, 235, 0.4);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background: #f5f9ff;
+    border-color: var(--blue-light);
+    transform: translateY(-1px);
+  }
+  .btn-ghost:hover:not(:disabled) { background: #ffffff; }
+  .upload-zone:hover {
+    border-color: var(--blue-dark);
+    border-style: solid;
+    background: #f5f9ff;
+    transform: scale(1.01);
+  }
+  .nav-item:hover { background: #eff4ff; }
+  .mode-card:hover:not(:disabled) {
+    transform: translateY(-3px);
+    box-shadow:
+      0 18px 36px rgba(43, 80, 180, 0.22),
+      0 4px 10px rgba(43, 80, 180, 0.12),
+      inset 0 2px 4px rgba(255, 255, 255, 0.9),
+      inset 0 -6px 12px rgba(43, 80, 180, 0.08);
+  }
+  .choice:hover:not(:disabled) {
+    border-color: var(--blue-light);
+    background: #f5f9ff;
+    transform: translateY(-1px);
+    box-shadow:
+      0 5px 0 #bfdbfe,
+      0 10px 20px rgba(43, 80, 180, 0.14),
+      inset 0 1px 2px rgba(255, 255, 255, 0.9);
+  }
+  .remove-btn:hover { background: rgba(15, 35, 63, 0.95); transform: scale(1.08); }
+  .login-google:hover:not(:disabled) {
+    background: #f8fbff;
+    border-color: var(--blue-dark);
+    transform: translateY(-1px);
+  }
+}
+
 /* Respect users who prefer less motion. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
+  .toast {
+    animation: none !important;
+    transform: translateX(-50%) translateY(0) !important;
+  }
+  .confetti-piece { display: none !important; }
 }

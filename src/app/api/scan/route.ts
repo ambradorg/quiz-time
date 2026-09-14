@@ -153,11 +153,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (
-      textContent &&
-      files.length === 0 &&
-      textContent.trim().length > MAX_TEXT_CHARS
-    ) {
+    if (textContent && textContent.trim().length > MAX_TEXT_CHARS) {
       return NextResponse.json(
         {
           error: `That text is ${(textContent.length / 1000).toFixed(0)}k characters — please keep it under ${MAX_TEXT_CHARS / 1000}k characters.`,
@@ -188,6 +184,11 @@ export async function POST(request: NextRequest) {
       }
 
       parts = [];
+      // Text extracted client-side from PDFs that were too large to upload
+      // directly (see src/app/page.tsx) arrives alongside the smaller files.
+      if (textContent && textContent.trim()) {
+        parts.push(textContent.trim());
+      }
       for (const file of files) {
         if (file.size === 0) {
           return NextResponse.json(
@@ -250,8 +251,8 @@ export async function POST(request: NextRequest) {
       }
 
       parts.push(
-        files.length > 1
-          ? `You were given ${files.length} study sources (in this order). ${SYSTEM_PROMPT} Make sure the flashcards cover ALL of the sources, not just the first one.`
+        files.length > 1 || (textContent && textContent.trim())
+          ? `You were given ${files.length + (textContent && textContent.trim() ? 1 : 0)} study sources (in this order). ${SYSTEM_PROMPT} Make sure the flashcards cover ALL of the sources, not just the first one.`
           : SYSTEM_PROMPT
       );
     } else {
