@@ -4,6 +4,11 @@ import { extractDocxText, isDocxFile } from "@/lib/docx";
 import { extractPptxText, isPptxFile } from "@/lib/pptx";
 import { isRateLimited } from "@/lib/rate-limit";
 import { requireUser } from "@/lib/auth-guard";
+import {
+  AllModelsRateLimitedError,
+  generateWithFallback,
+  modelCandidates,
+} from "@/lib/model-fallback";
 
 export const maxDuration = 60;
 
@@ -44,19 +49,6 @@ For enumeration cards (rule 5), "answer" is the list of items joined with " ; ".
 
 type GeminiPart = string | { inlineData: { mimeType: string; data: string } };
 
-/**
- * Main model used for every generation request. Set GEMINI_MODEL in the
- * environment to override it without touching this file.
- */
-const PRIMARY_MODEL = "gemini-3.6-flash";
-
-/**
- * Gemini model names change over time (and GEMINI_MODEL may point at one that
- * isn't enabled for a given key), so try the main model first and fall back to
- * known-good ones when the API says it's unavailable.
- */
-const FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
-
 const SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
 const MIME_BY_EXTENSION: Record<string, string> = {
   jpg: "image/jpeg",
@@ -92,33 +84,6 @@ function resolveMimeType(file: File): string | null {
   // Unknown or empty type: treat it as a camera photo (the common case).
   if (!declared || declared.startsWith("image/")) return "image/jpeg";
   return null;
-}
-
-function modelCandidates(): string[] {
-  const configured = process.env.GEMINI_MODEL?.trim();
-  return [...new Set([configured || PRIMARY_MODEL, ...FALLBACK_MODELS])];
-}
-
-function isModelUnavailable(err: unknown): boolean {
-  const msg = String((err as Error)?.message ?? err);
-  return /404|not found|not supported|not a valid|unsupported|deprecated|no longer available/i.test(msg);
-}
-
-async function generateWithFallback(
-  genAI: ReturnType<typeof getGeminiClient>,
-  parts: GeminiPart[]
-) {
-  let lastError: unknown;
-  for (const name of modelCandidates()) {
-    try {
-      return await genAI.getGenerativeModel({ model: name }).generateContent(parts);
-    } catch (err) {
-      if (!isModelUnavailable(err)) throw err;
-      lastError = err;
-      console.warn(`Gemini model "${name}" unavailable — trying the next option.`);
-    }
-  }
-  throw lastError;
 }
 
 export async function POST(request: NextRequest) {
@@ -259,7 +224,10 @@ export async function POST(request: NextRequest) {
       parts = [`Here is the study text content:\n\n${textContent}\n\n${SYSTEM_PROMPT}`];
     }
 
-    const result = await generateWithFallback(genAI, parts);
+    const { result, model } = await generateWithFallback(genAI, parts);
+    // True when a fallback model served the request instead of the main one
+    // (the main model was unavailable or over its usage limit).
+    const usedFallback = model !== modelCandidates()[0];
 
     const responseText = result.response.text();
 
@@ -277,12 +245,17 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      model,
+      usedFallback,
       title: parsed.title || "Study Set",
       summary: parsed.summary || "",
       cards: parsed.cards,
     });
   } catch (error) {
     console.error("Scan error:", error);
+    if (error instanceof AllModelsRateLimitedError) {
+      return NextResponse.json({ error: error.message }, { status: 429 });
+    }
     const message = error instanceof Error ? error.message : "Failed to process file";
     return NextResponse.json({ error: message }, { status: 500 });
   }
