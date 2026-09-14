@@ -1045,16 +1045,18 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
       // The body may not be JSON (e.g. a host-level 413 page), so parse
       // defensively instead of crashing with "not valid JSON".
       const raw = await res.text();
-      let data: {
-        error?: string;
-        cards?: Flashcard[];
-        title?: string;
-        summary?: string;
-        /** Which Gemini model served the request (after any fallback). */
-        model?: string;
-        /** True when a fallback model served it instead of the main one. */
-        usedFallback?: boolean;
-      } | null = null;
+      let data:
+        | {
+            error?: string;
+            cards?: Flashcard[];
+            title?: string;
+            summary?: string;
+            /** Model that produced the cards (the server may have failed over). */
+            model?: string;
+            /** Set when the server had to switch models (rate limit / unavailable). */
+            notice?: string;
+          }
+        | null = null;
       if (raw) {
         try { data = JSON.parse(raw); } catch { data = null; }
       }
@@ -1072,15 +1074,14 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
       }
 
       onCardsReady(data.cards, data.title || "Study Set", data.summary || "", sourceType);
-      // Let the user know when a fallback model stepped in (the main model
-      // was over its usage limit or unavailable) — results are the same,
-      // just from a different engine.
-      showToast(
-        data.usedFallback && data.model
-          ? `Generated ${data.cards.length} flashcards (via ${data.model})`
-          : `Generated ${data.cards.length} flashcards!`,
-        PartyPopper
-      );
+      // If the AI had to switch models (its rate limit was hit, or the model
+      // isn't available) the server says so — that's worth showing instead of
+      // the plain success toast.
+      if (data.notice) {
+        showToast(data.notice, TriangleAlert);
+      } else {
+        showToast(`Generated ${data.cards.length} flashcards!`, PartyPopper);
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {

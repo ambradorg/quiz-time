@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { extractDocxText, isDocxFile } from "@/lib/docx";
 import { extractPptxText, isPptxFile } from "@/lib/pptx";
+import {
+  GeminiApiError,
+  generateWithFallback,
+  type GeminiPart,
+} from "@/lib/gemini";
 import { isRateLimited } from "@/lib/rate-limit";
 import { requireUser } from "@/lib/auth-guard";
-import {
-  AllModelsRateLimitedError,
-  generateWithFallback,
-  modelCandidates,
-} from "@/lib/model-fallback";
 
 export const maxDuration = 60;
 
@@ -45,9 +45,6 @@ IMPORTANT: Respond ONLY with valid JSON in this exact format:
 }
 
 For enumeration cards (rule 5), "answer" is the list of items joined with " ; ". For all other cards it is a single short answer.`;
-
-
-type GeminiPart = string | { inlineData: { mimeType: string; data: string } };
 
 const SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
 const MIME_BY_EXTENSION: Record<string, string> = {
@@ -224,10 +221,14 @@ export async function POST(request: NextRequest) {
       parts = [`Here is the study text content:\n\n${textContent}\n\n${SYSTEM_PROMPT}`];
     }
 
-    const { result, model } = await generateWithFallback(genAI, parts);
-    // True when a fallback model served the request instead of the main one
-    // (the main model was unavailable or over its usage limit).
-    const usedFallback = model !== modelCandidates()[0];
+    // Model selection with automatic failover: if the primary model is at its
+    // rate limit (or isn't available for the key), the next model is used
+    // instead of failing the upload. See src/lib/gemini.ts.
+    const { result, model, notice } = await generateWithFallback(
+      (name, content) => genAI.getGenerativeModel({ model: name }).generateContent(content),
+      parts
+    );
+    if (notice) console.warn(notice);
 
     const responseText = result.response.text();
 
@@ -245,18 +246,20 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      model,
-      usedFallback,
       title: parsed.title || "Study Set",
       summary: parsed.summary || "",
       cards: parsed.cards,
+      model,
+      // Only set when we had to switch models (rate limit / unavailable).
+      notice,
     });
   } catch (error) {
     console.error("Scan error:", error);
-    if (error instanceof AllModelsRateLimitedError) {
-      return NextResponse.json({ error: error.message }, { status: 429 });
-    }
     const message = error instanceof Error ? error.message : "Failed to process file";
-    return NextResponse.json({ error: message }, { status: 500 });
+    // GeminiApiError carries the status the situation deserves (429 when every
+    // model is rate-limited, 503 when none is available); anything else is a
+    // server-side failure.
+    const status = error instanceof GeminiApiError ? error.status : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }
