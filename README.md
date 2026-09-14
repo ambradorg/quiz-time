@@ -53,7 +53,7 @@ npm run dev
 | --- | --- | --- |
 | `DATABASE_URL` | yes | Postgres connection string. **Required at build time** – `src/db/index.ts` throws if it's missing. |
 | `GEMINI_API_KEY` | for generating cards | Without it the app shows a setup screen instead of the upload form. |
-| `GEMINI_MODEL` | no | Overrides the main model. Default main model is `gemini-3.6-flash`, which falls back to `gemini-2.5-flash` → `gemini-2.0-flash` → `gemini-1.5-flash` if it isn't available for your key. |
+| `GEMINI_MODEL` | no | Overrides the main model. Default main model is `gemini-3.6-flash`. If it isn't available for your key **or hits its usage limit (429 / quota exceeded)**, the app automatically tries the next model: `gemini-2.5-flash` → `gemini-2.0-flash` → `gemini-1.5-flash`. If *every* model is rate-limited it returns a 429 with a "wait a few minutes" message. |
 | `AUTH_SECRET` | for sign-in | Auth.js secret. Generate: `openssl rand -base64 32`. |
 | `AUTH_GOOGLE_ID` | for sign-in | Google OAuth client ID. |
 | `AUTH_GOOGLE_SECRET` | for sign-in | Google OAuth client secret. |
@@ -313,6 +313,14 @@ npm run test:e2e    # auth/stats e2e suite (minted JWTs, real HTTP)
 - **AI generation is sign-in-only** and rate-limited to 10 requests per 10
   minutes per user on `/api/scan` (soft limit, per server instance) so nobody
   can burn your Gemini free tier.
+- **Automatic model fallback**: if the main Gemini model is unavailable for
+  your key or returns a rate-limit/quota error (429), `/api/scan` retries the
+  next model in the chain (`gemini-2.5-flash` → `gemini-2.0-flash` →
+  `gemini-1.5-flash`) so a rate-limited main model doesn't break generation.
+  The response reports which model served it (`model`, `usedFallback`), and
+  the app shows a toast when a fallback model was used. If every model is
+  rate-limited (e.g. the shared free-tier daily quota is exhausted) the user
+  gets a clear 429 "wait a few minutes" message.
 - `GET /api/config` tells the frontend whether `GEMINI_API_KEY` is set, so the
   app shows the setup screen instead of a broken upload form.
 - `GET /api/health` also pings the database (returns 503 when the DB is down)

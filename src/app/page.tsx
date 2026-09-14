@@ -1045,7 +1045,16 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
       // The body may not be JSON (e.g. a host-level 413 page), so parse
       // defensively instead of crashing with "not valid JSON".
       const raw = await res.text();
-      let data: { error?: string; cards?: Flashcard[]; title?: string; summary?: string } | null = null;
+      let data: {
+        error?: string;
+        cards?: Flashcard[];
+        title?: string;
+        summary?: string;
+        /** Which Gemini model served the request (after any fallback). */
+        model?: string;
+        /** True when a fallback model served it instead of the main one. */
+        usedFallback?: boolean;
+      } | null = null;
       if (raw) {
         try { data = JSON.parse(raw); } catch { data = null; }
       }
@@ -1063,7 +1072,15 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
       }
 
       onCardsReady(data.cards, data.title || "Study Set", data.summary || "", sourceType);
-      showToast(`Generated ${data.cards.length} flashcards!`, PartyPopper);
+      // Let the user know when a fallback model stepped in (the main model
+      // was over its usage limit or unavailable) — results are the same,
+      // just from a different engine.
+      showToast(
+        data.usedFallback && data.model
+          ? `Generated ${data.cards.length} flashcards (via ${data.model})`
+          : `Generated ${data.cards.length} flashcards!`,
+        PartyPopper
+      );
     } catch (err) {
       setError((err as Error).message);
     } finally {
