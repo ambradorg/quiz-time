@@ -547,15 +547,13 @@ function StudyCard({
         <div className={`card-inner ${flipped ? "flipped" : ""}`}>
           {/* Front */}
           <div
-            className="card-front glass-card"
+            className="card-front glass-card clay-flash-front"
             style={{
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
               padding: 28,
-              background: "linear-gradient(135deg, #eff6ff, #eef2ff)",
-              border: "2px solid rgba(37,99,235,0.15)",
             }}
           >
             <div style={{ marginBottom: 12, color: "var(--accent-dark)" }}>
@@ -574,15 +572,13 @@ function StudyCard({
 
           {/* Back */}
           <div
-            className="card-back glass-card"
+            className="card-back glass-card clay-flash-back"
             style={{
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
               padding: 28,
-              background: "linear-gradient(135deg, #ecfeff, #eff6ff)",
-              border: "2px solid rgba(16,185,129,0.25)",
             }}
           >
             <div style={{ marginBottom: 10, color: "#f59e0b" }}>
@@ -715,13 +711,14 @@ function ReviewSummary({
           width: 140,
           height: 140,
           borderRadius: "50%",
-          background: "linear-gradient(135deg, var(--accent-dark), var(--purple))",
+          background: "linear-gradient(165deg, #5b9cff 0%, #4f6df5 55%, #7c3aed 100%)",
+          border: "4px solid rgba(255,255,255,0.9)",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
           margin: "0 auto 24px",
-          boxShadow: "0 8px 32px rgba(37,99,235,0.3)",
+          boxShadow: "inset 0 4px 8px rgba(255,255,255,0.4), inset 0 -10px 18px rgba(0,0,0,0.22), 0 14px 30px rgba(43,80,180,0.35)",
         }}
       >
         <span style={{ fontSize: 40, fontWeight: 900, color: "white" }}>{pct}%</span>
@@ -990,31 +987,15 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
       </p>
 
       {/* Mode toggle */}
-      <div style={{ display: "flex", background: "#dbeafe", borderRadius: 50, padding: 4, marginBottom: 20, gap: 4 }}>
+      <div className="clay-segment" style={{ marginBottom: 20 }}>
         {[
           { id: "file" as const, label: "Files / Photos", Icon: FileText },
           { id: "text" as const, label: "Paste Text", Icon: Keyboard },
         ].map((m) => (
           <button
             key={m.id}
+            className={"clay-segment-btn" + (mode === m.id ? " active" : "")}
             onClick={() => { setMode(m.id); setError(""); }}
-            style={{
-              flex: 1,
-              padding: "10px 16px",
-              borderRadius: 50,
-              border: "none",
-              cursor: "pointer",
-              fontWeight: 700,
-              fontSize: 14,
-              transition: "all 0.2s",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 7,
-              background: mode === m.id ? "linear-gradient(135deg, var(--accent-dark), var(--violet))" : "transparent",
-              color: mode === m.id ? "white" : "var(--text-muted)",
-              boxShadow: mode === m.id ? "0 2px 12px rgba(37,99,235,0.3)" : "none",
-            }}
           >
             <m.Icon size={15} aria-hidden />
             {m.label}
@@ -1077,6 +1058,7 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
                 {picked.map((item) => (
                   <div
                     key={item.id}
+                    className="clay-thumb"
                     style={{
                       position: "relative",
                       aspectRatio: "1 / 1",
@@ -1177,6 +1159,7 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
       ) : (
         <div style={{ marginBottom: 16 }}>
           <textarea
+            className="clay-textarea"
             value={textInput}
             onChange={(e) => setTextInput(e.target.value)}
             placeholder="Paste your notes, book excerpt, or any study text here... The AI will turn it into flashcards!"
@@ -1185,18 +1168,19 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
               minHeight: 200,
               padding: "16px",
               borderRadius: 16,
-              border: "2px solid #dbeafe",
+              border: "2px solid #ffffff",
               fontSize: 14,
+              fontWeight: 600,
               lineHeight: 1.6,
               resize: "vertical",
               fontFamily: "inherit",
               outline: "none",
               color: "var(--text)",
-              background: "white",
-              transition: "border-color 0.2s",
+              background: "#e9efff",
+              transition: "border-color 0.2s, box-shadow 0.2s, background 0.2s",
             }}
-            onFocus={(e) => (e.target.style.borderColor = "var(--accent-dark)")}
-            onBlur={(e) => (e.target.style.borderColor = "#dbeafe")}
+            onFocus={(e) => { e.target.style.borderColor = "var(--blue)"; e.target.style.background = "white"; }}
+            onBlur={(e) => { e.target.style.borderColor = "#ffffff"; e.target.style.background = "#e9efff"; }}
           />
           <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "6px 0 0", textAlign: "right" }}>
             {textInput.length} characters
@@ -1206,17 +1190,9 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
 
       {error && (
         <div
+          className="feedback feedback-wrong"
           style={{
-            background: "#dbeafe",
-            border: "1px solid #bfdbfe",
-            borderRadius: 12,
-            padding: "12px 16px",
             marginBottom: 16,
-            color: "#9f1239",
-            fontSize: 14,
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 8,
           }}
         >
           <TriangleAlert size={17} aria-hidden style={{ flexShrink: 0, marginTop: 1 }} />
@@ -3091,11 +3067,9 @@ function StatsPage({ onOpenDeck }: { onOpenDeck: (id: number) => void }) {
 
       {/* Streak hero */}
       <div
-        className="glass-card"
+        className="glass-card clay-streak"
         style={{
-          background: "linear-gradient(135deg, #1d4ed8, #7c3aed)",
           color: "white",
-          borderRadius: 20,
           padding: "18px 20px",
           display: "flex",
           alignItems: "center",
@@ -3303,14 +3277,10 @@ function HomePage({ onUpload, onSessions }: { onUpload: () => void; onSessions: 
     <div style={{ padding: "20px 16px" }}>
       {/* Hero */}
       <div
+        className="clay-hero"
         style={{
-          background: "linear-gradient(135deg, #1d4ed8, #7c3aed)",
-          borderRadius: 24,
           padding: "28px 24px",
           marginBottom: 24,
-          color: "white",
-          position: "relative",
-          overflow: "hidden",
         }}
       >
         <div style={{
@@ -3341,8 +3311,8 @@ function HomePage({ onUpload, onSessions }: { onUpload: () => void; onSessions: 
           Upload your study material and I&apos;ll turn it into fun flashcards — then review them with Study, Exam, Identification or Enumeration mode!
         </p>
         <button
-          className="btn"
-          style={{ background: "white", color: "var(--accent-dark)", fontWeight: 800, fontSize: 15 }}
+          className="btn btn-white-clay"
+          style={{ fontWeight: 800, fontSize: 15 }}
           onClick={onUpload}
         >
           <Sparkles />
@@ -3869,14 +3839,10 @@ export default function App() {
     <div style={{ maxWidth: 520, margin: "0 auto", position: "relative" }}>
       <IOSInstallPrompt />
       {/* Top bar */}
-      <div style={{
+      <div className="clay-topbar" style={{
         position: "sticky",
         top: 0,
         zIndex: 50,
-        background: "rgba(224, 242, 254, 0.78)",
-        backdropFilter: "blur(14px)",
-        WebkitBackdropFilter: "blur(14px)",
-        borderBottom: "1px solid rgba(147, 197, 253, 0.7)",
         padding: "12px 16px",
         display: "flex",
         alignItems: "center",

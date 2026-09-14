@@ -42,6 +42,14 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     <html lang="en">
       <head>
         <link rel="apple-touch-icon" href="/logo.png" />
+        {/* Rounded display font for the soft-clay look. Stylesheet <link> on
+            purpose: next/font would hard-fail the build when Google Fonts is
+            unreachable, while this degrades gracefully to system fonts. */}
+        {/* eslint-disable-next-line @next/next/no-page-custom-font */}
+        <link
+          href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap"
+          rel="stylesheet"
+        />
       </head>
       <body>
         <SessionProvider>
