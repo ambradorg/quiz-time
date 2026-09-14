@@ -113,7 +113,7 @@ globalThis.fetch = async (url, options) => {
 };
 
 const { POST } = await import("../src/app/api/scan/route.ts");
-const { resetFailoverState } = await import("../src/lib/gemini.ts");
+const { FALLBACK_MODELS, PRIMARY_MODEL, resetFailoverState } = await import("../src/lib/gemini.ts");
 
 /** POST a text-only study request, exactly like the upload form does. */
 async function scan() {
@@ -141,8 +141,16 @@ test.after(() => {
 });
 
 describe("POST /api/scan with a rate-limited primary model", () => {
+  test("uses the available AI Studio fallback model IDs in priority order", () => {
+    assert.deepEqual(FALLBACK_MODELS, [
+      "gemini-3.1-flash-lite",
+      "antigravity",
+      "gemini-3.5-flash-lite",
+    ]);
+  });
+
   test("generates anyway, with the next available model", async () => {
-    exhausted.add("gemini-3.6-flash");
+    exhausted.add(PRIMARY_MODEL);
 
     const { status, body } = await scan();
 
@@ -150,12 +158,12 @@ describe("POST /api/scan with a rate-limited primary model", () => {
     assert.equal(body.success, true);
     assert.equal(body.title, "Cell Biology");
     assert.equal(body.cards.length, 1);
-    assert.equal(body.model, "gemini-2.5-flash");
+    assert.equal(body.model, "gemini-3.1-flash-lite");
     assert.match(body.notice, /gemini-3\.6-flash hit its request limit/);
-    assert.match(body.notice, /generated with gemini-2\.5-flash instead/);
+    assert.match(body.notice, /generated with gemini-3\.1-flash-lite instead/);
     assert.match(body.notice, /Trying gemini-3\.6-flash again in/);
     // The primary really was attempted first, then the fallback.
-    assert.deepEqual(requested, ["gemini-3.6-flash", "gemini-2.5-flash"]);
+    assert.deepEqual(requested, ["gemini-3.6-flash", "gemini-3.1-flash-lite"]);
   });
 
   test("the next upload skips the exhausted model entirely", async () => {
@@ -166,24 +174,24 @@ describe("POST /api/scan with a rate-limited primary model", () => {
     const { status, body } = await scan();
 
     assert.equal(status, 200);
-    assert.equal(body.model, "gemini-2.5-flash");
-    assert.deepEqual(requested, ["gemini-2.5-flash"]);
+    assert.equal(body.model, "gemini-3.1-flash-lite");
+    assert.deepEqual(requested, ["gemini-3.1-flash-lite"]);
   });
 
   test("walks down the list when several models are exhausted", async () => {
     exhausted.add("gemini-3.6-flash");
-    exhausted.add("gemini-2.5-flash");
-    exhausted.add("gemini-2.0-flash");
+    exhausted.add("gemini-3.1-flash-lite");
+    exhausted.add("antigravity");
 
     const { status, body } = await scan();
 
     assert.equal(status, 200);
-    assert.equal(body.model, "gemini-1.5-flash");
+    assert.equal(body.model, "gemini-3.5-flash-lite");
     assert.deepEqual(requested, [
       "gemini-3.6-flash",
-      "gemini-2.5-flash",
-      "gemini-2.0-flash",
-      "gemini-1.5-flash",
+      "gemini-3.1-flash-lite",
+      "antigravity",
+      "gemini-3.5-flash-lite",
     ]);
   });
 
@@ -193,12 +201,12 @@ describe("POST /api/scan with a rate-limited primary model", () => {
     const { status, body } = await scan();
 
     assert.equal(status, 200);
-    assert.equal(body.model, "gemini-2.5-flash");
+    assert.equal(body.model, "gemini-3.1-flash-lite");
     assert.match(body.notice, /isn't available for this API key/);
   });
 
   test("answers 429 with a retry message when every model is exhausted", async () => {
-    for (const model of ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]) {
+    for (const model of ["gemini-3.6-flash", "gemini-3.1-flash-lite", "antigravity", "gemini-3.5-flash-lite"]) {
       exhausted.add(model);
     }
 
@@ -207,15 +215,15 @@ describe("POST /api/scan with a rate-limited primary model", () => {
     assert.equal(status, 429);
     assert.match(body.error, /Every Gemini model is at its request limit/);
     assert.match(body.error, /Please try again/);
-    assert.match(body.error, /gemini-1\.5-flash/);
+    assert.match(body.error, /gemini-3\.5-flash-lite/);
   });
 
   test("healthy primary: cards come back with no notice", async () => {
     const { status, body } = await scan();
 
     assert.equal(status, 200);
-    assert.equal(body.model, "gemini-3.6-flash");
+    assert.equal(body.model, PRIMARY_MODEL);
     assert.equal(body.notice, undefined);
-    assert.deepEqual(requested, ["gemini-3.6-flash"]);
+    assert.deepEqual(requested, [PRIMARY_MODEL]);
   });
 });
