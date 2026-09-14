@@ -262,6 +262,16 @@ Vercel, change the env var and redeploy/restart the functions.
 4. Deploy. If the build fails with `DATABASE_URL is required`, the variable
    wasn't set before the build started.
 
+### Upload sizes on Vercel
+
+Vercel caps request bodies at **4.5 MB** (`413 FUNCTION_PAYLOAD_TOO_LARGE`).
+The app handles this in `src/app/page.tsx`: once the direct-upload budget
+(~4 MB) is used up, PDFs are parsed to plain text **in the browser** with
+pdf.js (`src/lib/pdf-text.ts`) and only the text is sent to `/api/scan` —
+so multi-MB lecture PDFs still work. Scanned (image-only) PDFs have no text
+layer, so oversized scans are rejected with a clear message instead of a
+cryptic one; small scans still go to Gemini as files.
+
 ## Scripts
 
 ```bash
