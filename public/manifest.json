@@ -1,6 +1,7 @@
 {
   "name": "QuizTime – Flashcard Quiz Maker",
   "short_name": "QuizTime",
+  "id": "/",
   "description": "Upload PDFs, photos, or Word docs and turn them into flashcard quizzes!",
   "start_url": "/",
   "display": "standalone",

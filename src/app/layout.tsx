@@ -5,6 +5,7 @@ import { auth } from "@/auth";
 import { isMaintenanceMode } from "@/lib/maintenance";
 import { MaintenanceScreen } from "@/components/maintenance";
 import { MaintenanceBanner } from "@/components/maintenance-banner";
+import { RegisterServiceWorker } from "@/components/register-sw";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -52,6 +53,8 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         />
       </head>
       <body>
+        {/* Keeps installed home-screen apps in sync with every deploy. */}
+        <RegisterServiceWorker />
         <SessionProvider>
           {maintenance && !signedIn ? (
             <MaintenanceScreen />

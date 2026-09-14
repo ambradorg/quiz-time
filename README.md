@@ -262,6 +262,28 @@ Vercel, change the env var and redeploy/restart the functions.
 4. Deploy. If the build fails with `DATABASE_URL is required`, the variable
    wasn't set before the build started.
 
+### Installed apps & updates (service worker)
+
+The app is installable (`public/manifest.json`, `"id": "/"` keeps the install
+identity stable), and `public/sw.js` keeps installed home-screen apps in sync
+with every deploy — each deploy replaces content-hashed assets, so stale HTML
+would 404 its CSS/JS and open unstyled. Strategy (registered in production only
+by `src/components/register-sw.tsx`):
+
+- **Navigations (HTML): network-first.** Every launch fetches fresh HTML; the
+  cache is only an offline fallback (`caches.match("/")`).
+- **Immutable assets (`/_next/static/*`, `/images/*`): cache-first**, filled on
+  first fetch.
+- **`/api/*` and non-GET requests: never cached.**
+- **`/sw.js` itself is served with `Cache-Control: no-cache, no-store,
+  must-revalidate`** plus `Service-Worker-Allowed: /` (see `next.config.ts`),
+  so browsers detect new versions immediately.
+- **`skipWaiting()` + `clients.claim()`** activate a new worker right away, and
+  activation purges every cache that isn't the current one.
+- To force-invalidate all cached content, **bump `VERSION` in `public/sw.js`**
+  (e.g. `quiztime-v2`) — the cache namespace changes and old caches are deleted
+  on activation.
+
 ### Upload sizes on Vercel
 
 Vercel caps request bodies at **4.5 MB** (`413 FUNCTION_PAYLOAD_TOO_LARGE`).
