@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { extractDocxText, isDocxFile } from "@/lib/docx";
 import { extractPptxText, isPptxFile } from "@/lib/pptx";
+import {
+  GeminiApiError,
+  generateWithFallback,
+  type GeminiPart,
+} from "@/lib/gemini";
 import { isRateLimited } from "@/lib/rate-limit";
 import { requireUser } from "@/lib/auth-guard";
 
@@ -41,22 +46,6 @@ IMPORTANT: Respond ONLY with valid JSON in this exact format:
 
 For enumeration cards (rule 5), "answer" is the list of items joined with " ; ". For all other cards it is a single short answer.`;
 
-
-type GeminiPart = string | { inlineData: { mimeType: string; data: string } };
-
-/**
- * Main model used for every generation request. Set GEMINI_MODEL in the
- * environment to override it without touching this file.
- */
-const PRIMARY_MODEL = "gemini-3.6-flash";
-
-/**
- * Gemini model names change over time (and GEMINI_MODEL may point at one that
- * isn't enabled for a given key), so try the main model first and fall back to
- * known-good ones when the API says it's unavailable.
- */
-const FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
-
 const SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
 const MIME_BY_EXTENSION: Record<string, string> = {
   jpg: "image/jpeg",
@@ -92,33 +81,6 @@ function resolveMimeType(file: File): string | null {
   // Unknown or empty type: treat it as a camera photo (the common case).
   if (!declared || declared.startsWith("image/")) return "image/jpeg";
   return null;
-}
-
-function modelCandidates(): string[] {
-  const configured = process.env.GEMINI_MODEL?.trim();
-  return [...new Set([configured || PRIMARY_MODEL, ...FALLBACK_MODELS])];
-}
-
-function isModelUnavailable(err: unknown): boolean {
-  const msg = String((err as Error)?.message ?? err);
-  return /404|not found|not supported|not a valid|unsupported|deprecated|no longer available/i.test(msg);
-}
-
-async function generateWithFallback(
-  genAI: ReturnType<typeof getGeminiClient>,
-  parts: GeminiPart[]
-) {
-  let lastError: unknown;
-  for (const name of modelCandidates()) {
-    try {
-      return await genAI.getGenerativeModel({ model: name }).generateContent(parts);
-    } catch (err) {
-      if (!isModelUnavailable(err)) throw err;
-      lastError = err;
-      console.warn(`Gemini model "${name}" unavailable — trying the next option.`);
-    }
-  }
-  throw lastError;
 }
 
 export async function POST(request: NextRequest) {
@@ -259,7 +221,14 @@ export async function POST(request: NextRequest) {
       parts = [`Here is the study text content:\n\n${textContent}\n\n${SYSTEM_PROMPT}`];
     }
 
-    const result = await generateWithFallback(genAI, parts);
+    // Model selection with automatic failover: if the primary model is at its
+    // rate limit (or isn't available for the key), the next model is used
+    // instead of failing the upload. See src/lib/gemini.ts.
+    const { result, model, notice } = await generateWithFallback(
+      (name, content) => genAI.getGenerativeModel({ model: name }).generateContent(content),
+      parts
+    );
+    if (notice) console.warn(notice);
 
     const responseText = result.response.text();
 
@@ -280,10 +249,17 @@ export async function POST(request: NextRequest) {
       title: parsed.title || "Study Set",
       summary: parsed.summary || "",
       cards: parsed.cards,
+      model,
+      // Only set when we had to switch models (rate limit / unavailable).
+      notice,
     });
   } catch (error) {
     console.error("Scan error:", error);
     const message = error instanceof Error ? error.message : "Failed to process file";
-    return NextResponse.json({ error: message }, { status: 500 });
+    // GeminiApiError carries the status the situation deserves (429 when every
+    // model is rate-limited, 503 when none is available); anything else is a
+    // server-side failure.
+    const status = error instanceof GeminiApiError ? error.status : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }
