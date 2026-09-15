@@ -4,6 +4,10 @@ import { studySessions, flashcards, cardProgress } from "@/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { requireUser } from "@/lib/auth-guard";
 
+// Same limits as POST /api/sessions — keep deck metadata consistent.
+const MAX_TITLE_CHARS = 120;
+const MAX_SUMMARY_CHARS = 500;
+
 /**
  * Load a session only if it belongs to the signed-in user.
  * Returns [null, errorResponse] when missing or not owned, so a foreign
@@ -95,8 +99,46 @@ export async function PATCH(
     if (notFound) return notFound;
 
     const body = await request.json();
-    const { cardId, isKnown } = body;
+    const { cardId, isKnown, title, summary } = body;
 
+    // ── Deck metadata update (rename / edit summary) ─────────────────────
+    // Any payload carrying `title` or `summary` edits the deck itself;
+    // anything else falls through to the card-progress path below.
+    if (title !== undefined || summary !== undefined) {
+      const update: { title?: string; summary?: string | null } = {};
+
+      if (title !== undefined) {
+        if (typeof title !== "string" || !title.trim()) {
+          return NextResponse.json(
+            { error: "A deck title is required" },
+            { status: 400 }
+          );
+        }
+        update.title = title.trim().slice(0, MAX_TITLE_CHARS);
+      }
+      if (summary !== undefined) {
+        if (summary !== null && typeof summary !== "string") {
+          return NextResponse.json(
+            { error: "summary must be a string or null" },
+            { status: 400 }
+          );
+        }
+        update.summary =
+          typeof summary === "string" && summary.trim()
+            ? summary.trim().slice(0, MAX_SUMMARY_CHARS)
+            : null;
+      }
+
+      const [updated] = await db
+        .update(studySessions)
+        .set(update)
+        .where(eq(studySessions.id, sessionId))
+        .returning();
+
+      return NextResponse.json({ success: true, session: updated });
+    }
+
+    // ── Card progress update (study mode "know / don't know") ────────────
     if (!Number.isInteger(cardId) || typeof isKnown !== "boolean") {
       return NextResponse.json(
         { error: "cardId (integer) and isKnown (boolean) are required" },

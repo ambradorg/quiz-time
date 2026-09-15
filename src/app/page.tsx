@@ -40,6 +40,8 @@ import {
   Camera,
   ChartColumn,
   Check,
+  ChevronDown,
+  ChevronUp,
   CircleCheckBig,
   CircleQuestionMark,
   CircleX,
@@ -66,7 +68,9 @@ import {
   Moon,
   Orbit,
   PartyPopper,
+  Pencil,
   PenLine,
+  Plus,
   Presentation,
   RefreshCw,
   Save,
@@ -425,6 +429,8 @@ function SourceTypeIcon({ type, size }: { type: string; size: number }) {
       ? Presentation
       : type === "mixed"
       ? Files
+      : type === "manual"
+      ? Layers
       : Keyboard;
   return <Icon size={size} strokeWidth={1.75} aria-hidden />;
 }
@@ -3199,6 +3205,7 @@ function QuizPage({
   summary,
   onSave,
   onBack,
+  onEditDeck,
 }: {
   sessionId?: number;
   cards: Flashcard[];
@@ -3206,6 +3213,8 @@ function QuizPage({
   summary: string;
   onSave?: (title: string) => Promise<void>;
   onBack: () => void;
+  /** Open the deck editor for this saved deck (rename / add / edit / reorder cards). */
+  onEditDeck?: () => void;
 }) {
   const [mode, setMode] = useState<QuizMode>("select");
 
@@ -3644,6 +3653,17 @@ function QuizPage({
             Saved
           </span>
         )}
+        {onEditDeck && (
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={onEditDeck}
+            style={{ padding: "6px 10px", borderRadius: 12, flexShrink: 0 }}
+            aria-label="Edit deck"
+            title="Edit deck — rename, add, edit, reorder or delete cards"
+          >
+            <Pencil />
+          </button>
+        )}
       </div>
 
       {/* Mode switch */}
@@ -3932,10 +3952,13 @@ function QuizPage({
 function SessionsPage({
   onOpen,
   onReviewDeck,
+  onEditDeck,
 }: {
   onOpen: (id: number) => void;
   /** Jump straight into the spaced-repetition queue for one deck. */
   onReviewDeck: (id: number) => void;
+  /** Open the deck editor — a deck id to edit, or null for a new manual deck. */
+  onEditDeck: (id: number | null) => void;
 }) {
   const [sessions, setSessions] = useState<StudySession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -4000,9 +4023,19 @@ function SessionsPage({
           <Library size={21} aria-hidden />
           My Study Sets
         </h2>
-        <button className="btn btn-ghost btn-sm" onClick={() => load()} style={{ padding: "6px 10px" }}>
-          <RefreshCw />
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={() => onEditDeck(null)}
+            style={{ padding: "6px 12px" }}
+          >
+            <Plus />
+            New
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={() => load()} style={{ padding: "6px 10px" }} aria-label="Refresh study sets">
+            <RefreshCw />
+          </button>
+        </div>
       </div>
 
       {loading ? (
@@ -4017,9 +4050,13 @@ function SessionsPage({
             <Inbox size={64} strokeWidth={1.5} aria-hidden />
           </div>
           <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px" }}>No study sets yet!</h3>
-          <p style={{ color: "var(--text-muted)", fontSize: 14, margin: 0 }}>
-            Upload a PDF or image to create your first flashcard set
+          <p style={{ color: "var(--text-muted)", fontSize: 14, margin: "0 0 16px" }}>
+            Upload a PDF or image to create your first flashcard set — or build one yourself, card by card.
           </p>
+          <button className="btn btn-primary btn-sm" onClick={() => onEditDeck(null)}>
+            <PenLine />
+            Create manually
+          </button>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -4099,9 +4136,21 @@ function SessionsPage({
                 )}
                 <button
                   className="btn btn-ghost btn-sm"
+                  style={{ padding: "6px" }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEditDeck(session.id);
+                  }}
+                  aria-label={`Edit ${session.title}`}
+                >
+                  <Pencil />
+                </button>
+                <button
+                  className="btn btn-ghost btn-sm"
                   style={{ padding: "6px", color: "#f43f5e", opacity: deleting === session.id ? 0.5 : 1 }}
                   onClick={(e) => handleDelete(session.id, e)}
                   disabled={deleting === session.id}
+                  aria-label={`Delete ${session.title}`}
                 >
                   <Trash />
                 </button>
@@ -4111,6 +4160,396 @@ function SessionsPage({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Deck Editor (rename, manual decks, card add/edit/delete/reorder) ───────
+/** A card being edited locally; `id` is set once the card exists on the server. */
+interface EditorCard {
+  /** Stable local identity for React (server ids are absent on new cards). */
+  key: number;
+  id?: number;
+  question: string;
+  answer: string;
+  hint: string;
+  difficulty: string;
+}
+
+const EDITOR_FIELD_STYLE: React.CSSProperties = {
+  width: "100%",
+  padding: "10px 12px",
+  borderRadius: 14,
+  border: "2px solid #ffffff",
+  background: "#e9efff",
+  fontSize: 14,
+  fontWeight: 600,
+  fontFamily: "inherit",
+  color: "var(--text)",
+  outline: "none",
+  transition: "border-color 0.2s, box-shadow 0.2s, background 0.2s",
+};
+
+/** Pressed-in clay focus treatment, shared by every editor field. */
+const editorFocus = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+  e.target.style.borderColor = "var(--blue)";
+  e.target.style.background = "white";
+};
+const editorBlur = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+  e.target.style.borderColor = "#ffffff";
+  e.target.style.background = "#e9efff";
+};
+
+function DeckEditorPage({
+  sessionId,
+  onExit,
+}: {
+  /** null → create a brand-new manual deck; a number → edit that deck. */
+  sessionId: number | null;
+  /** Leave the editor. `savedId` is the deck id when changes were saved. */
+  onExit: (savedId: number | null) => void;
+}) {
+  const [loading, setLoading] = useState(sessionId !== null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [title, setTitle] = useState("");
+  const [summary, setSummary] = useState("");
+  const [cards, setCards] = useState<EditorCard[]>([]);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const keySeq = useRef(0);
+  const nextKey = () => ++keySeq.current;
+
+  // Load the deck (edit mode only). New manual decks start empty.
+  useEffect(() => {
+    if (sessionId === null) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}`, { signal: controller.signal });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        setTitle(data.session?.title ?? "");
+        setSummary(data.session?.summary ?? "");
+        setCards(
+          (data.cards ?? []).map((c: { id: number; question: string; answer: string; hint?: string | null; difficulty?: string }) => ({
+            key: nextKey(),
+            id: c.id,
+            question: c.question ?? "",
+            answer: c.answer ?? "",
+            hint: c.hint ?? "",
+            difficulty: c.difficulty ?? "medium",
+          }))
+        );
+      } catch {
+        if (controller.signal.aborted) return;
+        setLoadFailed(true);
+        showToast("Failed to load deck", CircleX);
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [sessionId]);
+
+  const updateCard = (key: number, patch: Partial<EditorCard>) => {
+    setCards((prev) => prev.map((c) => (c.key === key ? { ...c, ...patch } : c)));
+    setDirty(true);
+  };
+
+  const addCard = () => {
+    setCards((prev) => [
+      ...prev,
+      { key: nextKey(), question: "", answer: "", hint: "", difficulty: "medium" },
+    ]);
+    setDirty(true);
+  };
+
+  const removeCard = (key: number) => {
+    setCards((prev) => prev.filter((c) => c.key !== key));
+    setDirty(true);
+  };
+
+  /** Swap a card with its neighbour — the reorder control (works on touch too). */
+  const moveCard = (index: number, dir: -1 | 1) => {
+    setCards((prev) => {
+      const j = index + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[index], next[j]] = [next[j], next[index]];
+      return next;
+    });
+    setDirty(true);
+  };
+
+  const handleBack = () => {
+    if (dirty && !confirm("Discard unsaved changes?")) return;
+    onExit(null);
+  };
+
+  const handleSave = async () => {
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+      showToast("Give your deck a title first", TriangleAlert);
+      return;
+    }
+    if (cards.length === 0) {
+      showToast("Add at least one card", TriangleAlert);
+      return;
+    }
+    for (let i = 0; i < cards.length; i++) {
+      if (!cards[i].question.trim() || !cards[i].answer.trim()) {
+        showToast(`Card ${i + 1} needs a question and an answer`, TriangleAlert);
+        return;
+      }
+    }
+
+    setSaving(true);
+    try {
+      const payload = cards.map((c) => ({
+        ...(c.id !== undefined ? { id: c.id } : {}),
+        question: c.question.trim(),
+        answer: c.answer.trim(),
+        hint: c.hint.trim() || null,
+        difficulty: c.difficulty,
+      }));
+
+      let savedId: number;
+      if (sessionId === null) {
+        // Brand-new manual deck — the plain create endpoint does it all.
+        const res = await fetch("/api/sessions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: trimmedTitle,
+            sourceType: "manual",
+            summary: summary.trim() || undefined,
+            cards: payload,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to create deck");
+        savedId = data.session.id;
+      } else {
+        savedId = sessionId;
+        // Rename / summary first, then the bulk card save.
+        const metaRes = await fetch(`/api/sessions/${sessionId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: trimmedTitle, summary: summary.trim() }),
+        });
+        const metaData = await metaRes.json();
+        if (!metaRes.ok) throw new Error(metaData.error || "Failed to rename deck");
+
+        const cardsRes = await fetch(`/api/sessions/${sessionId}/cards`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cards: payload }),
+        });
+        const cardsData = await cardsRes.json();
+        if (!cardsRes.ok) throw new Error(cardsData.error || "Failed to save cards");
+      }
+
+      setDirty(false);
+      showToast(sessionId === null ? "Study set created!" : "Changes saved!", CircleCheckBig);
+      onExit(savedId);
+    } catch (err) {
+      showToast(err instanceof Error && err.message ? err.message : "Failed to save", CircleX);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div style={{ padding: "20px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
+        <div className="shimmer" style={{ height: 44, borderRadius: 16 }} />
+        <div className="shimmer" style={{ height: 120, borderRadius: 16 }} />
+        <div className="shimmer" style={{ height: 160, borderRadius: 16 }} />
+      </div>
+    );
+  }
+
+  if (loadFailed) {
+    return (
+      <div style={{ padding: "20px 16px", textAlign: "center" }}>
+        <div style={{ marginBottom: 12, color: "var(--text-muted)" }}>
+          <CircleX size={56} strokeWidth={1.5} aria-hidden />
+        </div>
+        <h3 style={{ fontSize: 17, fontWeight: 700, margin: "0 0 12px" }}>Couldn&apos;t load this deck</h3>
+        <button className="btn btn-secondary btn-sm" onClick={() => onExit(null)}>
+          <ArrowLeft />
+          Back
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: "16px" }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <button className="btn btn-ghost btn-sm" onClick={handleBack} style={{ padding: "6px 10px", borderRadius: 12 }} aria-label="Back">
+          <ArrowLeft />
+        </button>
+        <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {sessionId === null ? "New Study Set" : "Edit Study Set"}
+        </h2>
+        <button
+          className="btn btn-primary btn-sm"
+          onClick={handleSave}
+          disabled={saving}
+          style={{ flexShrink: 0 }}
+        >
+          {saving ? "..." : (
+            <>
+              <Save />
+              Save
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Deck details (rename) */}
+      <div className="glass-card" style={{ padding: 14, marginBottom: 14 }}>
+        <label style={{ display: "block", fontSize: 12, fontWeight: 800, color: "var(--text-muted)", marginBottom: 6 }}>
+          Title
+        </label>
+        <input
+          value={title}
+          onChange={(e) => { setTitle(e.target.value); setDirty(true); }}
+          onFocus={editorFocus}
+          onBlur={editorBlur}
+          placeholder="e.g. Biology Chapter 3"
+          maxLength={120}
+          style={{ ...EDITOR_FIELD_STYLE, fontSize: 15, fontWeight: 700, marginBottom: 12 }}
+          aria-label="Deck title"
+        />
+        <label style={{ display: "block", fontSize: 12, fontWeight: 800, color: "var(--text-muted)", marginBottom: 6 }}>
+          Description <span style={{ fontWeight: 600 }}>(optional)</span>
+        </label>
+        <input
+          value={summary}
+          onChange={(e) => { setSummary(e.target.value); setDirty(true); }}
+          onFocus={editorFocus}
+          onBlur={editorBlur}
+          placeholder="A short description of this deck"
+          maxLength={500}
+          style={EDITOR_FIELD_STYLE}
+          aria-label="Deck description"
+        />
+      </div>
+
+      {/* Cards */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "0 2px 10px" }}>
+        <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 7 }}>
+          <Layers size={16} aria-hidden />
+          Cards
+          <span className="badge" style={{ background: "#dbeafe", color: "#1d4ed8" }}>{cards.length}</span>
+        </h3>
+        <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600 }}>
+          Order matters — use the arrows
+        </span>
+      </div>
+
+      {cards.length === 0 && (
+        <div className="glass-card" style={{ padding: "28px 16px", textAlign: "center", marginBottom: 12 }}>
+          <div style={{ marginBottom: 10, color: "var(--text-muted)" }}>
+            <Inbox size={44} strokeWidth={1.5} aria-hidden />
+          </div>
+          <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>
+            No cards yet — add your first one below.
+          </p>
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 14 }}>
+        {cards.map((card, i) => (
+          <div key={card.key} className="glass-card animate-fade-in" style={{ padding: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span className="badge" style={{ background: "#eef2ff", color: "#4338ca", flexShrink: 0 }}>
+                Card {i + 1}
+              </span>
+              <select
+                value={card.difficulty}
+                onChange={(e) => updateCard(card.key, { difficulty: e.target.value })}
+                onFocus={editorFocus}
+                onBlur={editorBlur}
+                aria-label={`Difficulty for card ${i + 1}`}
+                style={{ ...EDITOR_FIELD_STYLE, width: "auto", padding: "5px 8px", fontSize: 12, borderRadius: 10 }}
+              >
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+              </select>
+              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  style={{ padding: 5 }}
+                  onClick={() => moveCard(i, -1)}
+                  disabled={i === 0}
+                  aria-label={`Move card ${i + 1} up`}
+                >
+                  <ChevronUp />
+                </button>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  style={{ padding: 5 }}
+                  onClick={() => moveCard(i, 1)}
+                  disabled={i === cards.length - 1}
+                  aria-label={`Move card ${i + 1} down`}
+                >
+                  <ChevronDown />
+                </button>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  style={{ padding: 5, color: "#f43f5e" }}
+                  onClick={() => removeCard(card.key)}
+                  aria-label={`Delete card ${i + 1}`}
+                >
+                  <Trash />
+                </button>
+              </div>
+            </div>
+
+            <textarea
+              className="clay-textarea"
+              value={card.question}
+              onChange={(e) => updateCard(card.key, { question: e.target.value })}
+              onFocus={editorFocus}
+              onBlur={editorBlur}
+              placeholder="Question"
+              rows={2}
+              aria-label={`Question for card ${i + 1}`}
+              style={{ ...EDITOR_FIELD_STYLE, minHeight: 56, resize: "vertical", lineHeight: 1.5, marginBottom: 8 }}
+            />
+            <textarea
+              className="clay-textarea"
+              value={card.answer}
+              onChange={(e) => updateCard(card.key, { answer: e.target.value })}
+              onFocus={editorFocus}
+              onBlur={editorBlur}
+              placeholder="Answer"
+              rows={2}
+              aria-label={`Answer for card ${i + 1}`}
+              style={{ ...EDITOR_FIELD_STYLE, minHeight: 56, resize: "vertical", lineHeight: 1.5, marginBottom: 8 }}
+            />
+            <input
+              value={card.hint}
+              onChange={(e) => updateCard(card.key, { hint: e.target.value })}
+              onFocus={editorFocus}
+              onBlur={editorBlur}
+              placeholder="Hint (optional)"
+              aria-label={`Hint for card ${i + 1}`}
+              style={{ ...EDITOR_FIELD_STYLE, fontSize: 13, padding: "8px 12px" }}
+            />
+          </div>
+        ))}
+      </div>
+
+      <button className="btn btn-secondary" style={{ width: "100%", marginBottom: 24 }} onClick={addCard}>
+        <Plus />
+        Add Card
+      </button>
     </div>
   );
 }
@@ -4545,11 +4984,14 @@ function HomePage({
   onUpload,
   onSessions,
   onReview,
+  onCreateManual,
   dueCount,
 }: {
   onUpload: () => void;
   onSessions: () => void;
   onReview: () => void;
+  /** Open the deck editor with a blank, hand-built deck. */
+  onCreateManual: () => void;
   dueCount: number;
 }) {
   return (
@@ -4688,6 +5130,14 @@ function HomePage({
         ))}
       </div>
 
+      <button
+        className="btn btn-primary"
+        style={{ width: "100%", marginBottom: 10 }}
+        onClick={onCreateManual}
+      >
+        <PenLine />
+        Create a Deck Manually
+      </button>
       <button
         className="btn btn-secondary"
         style={{ width: "100%" }}
@@ -4964,6 +5414,10 @@ export default function App() {
   const [hasApiKey, setHasApiKey] = useState(true);
   const [deckKey, setDeckKey] = useState(0);
 
+  // Deck editor overlay: { sessionId: null } creates a new manual deck,
+  // a number edits that saved deck. `origin` decides where "save" lands.
+  const [deckEditor, setDeckEditor] = useState<{ sessionId: number | null; origin: Tab } | null>(null);
+
   // Spaced repetition (P4): which deck the Review tab is filtered to, and how
   // many cards are due right now (the number on the nav badge).
   const [reviewDeckId, setReviewDeckId] = useState<number | null>(null);
@@ -5068,12 +5522,25 @@ export default function App() {
       setActiveSessionId(id);
       setActiveSessionCards(data.cards);
       setActiveSessionTitle(data.session.title);
-      setActiveSessionSummary("");
+      setActiveSessionSummary(data.session.summary ?? "");
       setPendingCards(null);
       setDeckKey((k) => k + 1);
       setTab("quiz");
     } catch {
       showToast("Failed to load session", CircleX);
+    }
+  };
+
+  /** Leaving the deck editor — saved decks reopen or refresh the list. */
+  const handleEditorExit = (savedId: number | null) => {
+    const origin = deckEditor?.origin;
+    setDeckEditor(null);
+    if (savedId === null) return; // cancelled — stay wherever we were
+    if (origin === "quiz") {
+      // Was studying this deck: reopen it so the quiz reflects the edits.
+      void handleOpenSession(savedId);
+    } else {
+      setTab("sessions");
     }
   };
 
@@ -5086,6 +5553,17 @@ export default function App() {
   const isViewingSession = activeSessionCards !== null && activeSessionId !== null && !pendingCards;
 
   const renderContent = () => {
+    // The deck editor takes over the whole screen while open.
+    if (deckEditor) {
+      return (
+        <DeckEditorPage
+          key={deckEditor.sessionId ?? "new"}
+          sessionId={deckEditor.sessionId}
+          onExit={handleEditorExit}
+        />
+      );
+    }
+
     if (tab === "quiz") {
       const cards = isViewingSession ? activeSessionCards! : pendingCards!;
       const title = isViewingSession ? activeSessionTitle : pendingTitle;
@@ -5099,6 +5577,11 @@ export default function App() {
           title={title}
           summary={summary}
           onSave={!isViewingSession ? handleSaveSession : undefined}
+          onEditDeck={
+            isViewingSession && activeSessionId !== null
+              ? () => setDeckEditor({ sessionId: activeSessionId, origin: "quiz" })
+              : undefined
+          }
           onBack={() => {
             setTab(isViewingSession ? "sessions" : "upload");
             if (isViewingSession) setActiveSessionCards(null);
@@ -5114,6 +5597,7 @@ export default function App() {
           onUpload={() => setTab("upload")}
           onSessions={() => setTab("sessions")}
           onReview={() => setTab("review")}
+          onCreateManual={() => setDeckEditor({ sessionId: null, origin: "home" })}
           dueCount={dueCount}
         />
       );
@@ -5174,6 +5658,7 @@ export default function App() {
             setReviewDeckId(id);
             setTab("review");
           }}
+          onEditDeck={(id) => setDeckEditor({ sessionId: id, origin: "sessions" })}
         />
       );
     }
@@ -5295,6 +5780,7 @@ export default function App() {
               setTab(id);
               setPendingCards(null);
               setActiveSessionCards(null);
+              setDeckEditor(null);
               if (id !== "review") setReviewDeckId(null);
             }}
             aria-label={badge ? `${label} — ${badge} card${badge === 1 ? "" : "s"} due` : label}
