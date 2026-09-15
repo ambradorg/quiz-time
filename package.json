@@ -10,7 +10,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:setup-test": "node scripts/setup-test-db.mjs",
-    "test:gemini": "tsx scripts/gemini-fallback.test.mjs",
+    "test:failover": "tsx scripts/failover.test.mjs",
+    "test:openrouter": "tsx scripts/openrouter.test.mjs",
     "test:scan": "tsx --experimental-test-module-mocks scripts/scan-fallback.test.mjs",
     "test:e2e": "tsx scripts/auth-e2e.mjs"
   },

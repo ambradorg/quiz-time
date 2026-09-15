@@ -1,24 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { extractDocxText, isDocxFile } from "@/lib/docx";
+import { getGeminiClient, generateWithGemini, type GeminiClient } from "@/lib/gemini";
 import { extractPptxText, isPptxFile } from "@/lib/pptx";
+import { generateWithOpenRouter } from "@/lib/openrouter";
 import {
-  GeminiApiError,
+  GenerationError,
   generateWithFallback,
-  type GeminiPart,
-} from "@/lib/gemini";
+  type AiPart,
+} from "@/lib/failover";
 import { isRateLimited } from "@/lib/rate-limit";
 import { requireUser } from "@/lib/auth-guard";
 
 export const maxDuration = 60;
-
-function getGeminiClient() {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not configured. Please add it to your .env file.");
-  }
-  return new GoogleGenerativeAI(apiKey);
-}
 
 const SYSTEM_PROMPT = `You are a smart study assistant. Analyze the provided content (from a PDF or image) and generate high-quality flashcard quiz questions.
 
@@ -124,9 +117,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let genAI: ReturnType<typeof getGeminiClient>;
+    // At least one provider key is needed; with both, QuizTime simply has a
+    // longer safety net (Gemini chain first, then OpenRouter).
+    const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    if (!geminiKey && !process.env.OPENROUTER_API_KEY) {
+      return NextResponse.json(
+        { error: "No AI provider is configured. Set GEMINI_API_KEY and/or OPENROUTER_API_KEY in your .env file." },
+        { status: 503 }
+      );
+    }
+
+    let genAI: GeminiClient | null = null;
     try {
-      genAI = getGeminiClient();
+      if (geminiKey) genAI = getGeminiClient();
     } catch (err) {
       return NextResponse.json(
         { error: (err as Error).message },
@@ -134,7 +137,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let parts: GeminiPart[];
+    let parts: AiPart[];
 
     if (files.length > 0) {
       const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
@@ -222,15 +225,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Model selection with automatic failover: if the primary model is at its
-    // rate limit (or isn't available for the key), the next model is used
-    // instead of failing the upload. See src/lib/gemini.ts.
-    const { result, model, notice } = await generateWithFallback(
-      (name, content) => genAI.getGenerativeModel({ model: name }).generateContent(content),
+    // rate limit (or isn't available for the key), the next model is used —
+    // across Gemini's models AND OpenRouter — instead of failing the upload.
+    // See src/lib/failover.ts.
+    const { text: responseText, model, provider, notice } = await generateWithFallback(
+      (candidate, content) =>
+        candidate.provider === "gemini"
+          ? generateWithGemini(genAI as GeminiClient, candidate, content)
+          : generateWithOpenRouter(candidate, content),
       parts
     );
     if (notice) console.warn(notice);
-
-    const responseText = result.response.text();
 
     // Extract JSON from the response
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
@@ -250,16 +255,17 @@ export async function POST(request: NextRequest) {
       summary: parsed.summary || "",
       cards: parsed.cards,
       model,
+      provider,
       // Only set when we had to switch models (rate limit / unavailable).
       notice,
     });
   } catch (error) {
     console.error("Scan error:", error);
     const message = error instanceof Error ? error.message : "Failed to process file";
-    // GeminiApiError carries the status the situation deserves (429 when every
+    // GenerationError carries the status the situation deserves (429 when every
     // model is rate-limited, 503 when none is available); anything else is a
     // server-side failure.
-    const status = error instanceof GeminiApiError ? error.status : 500;
+    const status = error instanceof GenerationError ? error.status : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }
