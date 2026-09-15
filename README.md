@@ -20,6 +20,9 @@ QuizTime turns them into flashcards, then lets you review them four ways:
   SM-2 descendant and shows you only what you're about to forget. Grade each
   card Again / Hard / Good / Easy and it is rescheduled automatically — see
   [Spaced repetition](#spaced-repetition-p4).
+- **Deck Editing** – rename any deck, add / edit / delete / reorder its cards,
+  or build a **manual deck** from scratch (no AI, no upload) — see
+  [Deck editing](#deck-editing).
 
 ## Uploading
 
@@ -34,6 +37,28 @@ study set** covering all of them.
   Old binary `.doc` files aren't supported — re-save them as `.docx` or export
   to PDF.
 - Limits: 15 MB per file, 24 MB total, 8 files.
+
+## Deck editing
+
+Every deck is editable after the fact, and decks can also be created by hand:
+
+- **Manual decks** – "Create a Deck Manually" (Home) or the **+ New** button
+  (My Study Sets) opens the deck editor with a blank deck. Give it a title,
+  add cards one by one and save — no upload or AI involved. Manual decks show
+  a layers icon in the deck list (`source_type = 'manual'`).
+- **Rename** – the editor's Title / Description fields rename any deck
+  (`PATCH /api/sessions/[id]` with `{ title, summary }`).
+- **Card CRUD + reorder** – in the editor (pencil icon on a deck row or in a
+  deck's header) each card's question, answer, hint and difficulty are
+  editable; arrows reorder; the trash icon deletes; "Add Card" appends.
+  Saving sends the whole list to `PUT /api/sessions/[id]/cards`, which diffs
+  it in one transaction: edited cards **keep their database id** — so study
+  progress, spaced-repetition schedules and stats survive an edit — omitted
+  cards are deleted (their progress cascades away) and new ones are inserted.
+  The array order becomes the deck's `order_index`.
+
+E2E coverage for all of the above lives in `scripts/deck-editor.test.mjs`
+(`npm run test:deck-editor`, same requirements as `npm run test:e2e`).
 
 ## Requirements
 
