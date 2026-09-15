@@ -1,7 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { signIn } from "next-auth/react";
+import { CloudOff, WifiOff } from "lucide-react";
+import {
+  enableOfflineMode,
+  isOfflineMode,
+  probeConnection,
+  readCachedProfile,
+  type OfflineProfile,
+} from "@/lib/offline";
 
 const AUTH_ERRORS: Record<string, string> = {
   Configuration: "Sign-in isn't set up yet. Please try again later.",
@@ -41,12 +49,61 @@ export function LoginPage({
     errorCode ? (AUTH_ERRORS[errorCode] ?? AUTH_ERRORS.Default) : null
   );
 
+  // Offline escape hatch: if this device has a cached profile (i.e. the account
+  // signed in here before) the app can be opened with no network at all.
+  const [cached, setCached] = useState<OfflineProfile | null>(null);
+  const [offlineAvailable, setOfflineAvailable] = useState(false);
+  const [checking, setChecking] = useState(false);
+
+  const [browserOffline, setBrowserOffline] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    const sync = () => setBrowserOffline(navigator.onLine === false);
+    sync();
+    window.addEventListener("online", sync);
+    window.addEventListener("offline", sync);
+    void (async () => {
+      const profile = await readCachedProfile();
+      if (!alive) return;
+      setCached(profile);
+      // Offered whenever this device knows the account — useful both offline
+      // and when sign-in itself is unreachable.
+      setOfflineAvailable(Boolean(profile) || isOfflineMode());
+    })();
+    return () => {
+      alive = false;
+      window.removeEventListener("online", sync);
+      window.removeEventListener("offline", sync);
+    };
+  }, []);
+
   const handleSignIn = () => {
     setSigningIn(true);
     void signIn("google", { callbackUrl: "/" }).catch(() => {
       setSigningIn(false);
       setError(AUTH_ERRORS.Default);
     });
+  };
+
+  /** Open the app from the cache: no session, no API, just the saved sets. */
+  const continueOffline = () => {
+    enableOfflineMode(true);
+    window.location.replace("/");
+  };
+
+  const tryConnection = async () => {
+    setChecking(true);
+    try {
+      const online = await probeConnection();
+      if (online) {
+        window.location.reload();
+        return;
+      }
+      setError("Still no connection. Check your Wi-Fi or mobile data.");
+    } finally {
+      setChecking(false);
+    }
   };
 
   return (
@@ -76,6 +133,58 @@ export function LoginPage({
               <p className="login-error" role="alert">
                 {error}
               </p>
+            )}
+
+            {offlineAvailable && (
+              <div
+                style={{
+                  margin: "0 0 14px",
+                  background: browserOffline ? "#fff7ed" : "#eff6ff",
+                  border: `1.5px solid ${browserOffline ? "#fed7aa" : "#bfdbfe"}`,
+                  borderRadius: 16,
+                  padding: "12px 14px",
+                  textAlign: "left",
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "flex-start",
+                }}
+              >
+                <span
+                  style={{
+                    color: browserOffline ? "#9a3412" : "#1e40af",
+                    flexShrink: 0,
+                    display: "flex",
+                    marginTop: 1,
+                  }}
+                  aria-hidden
+                >
+                  {browserOffline ? <WifiOff size={18} /> : <CloudOff size={18} />}
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 800 }}>
+                    {browserOffline ? "You're offline" : "Study without signing in"}
+                  </p>
+                  <p style={{ margin: "2px 0 8px", fontSize: 12.5, color: "var(--text-muted)" }}>
+                    {cached?.name
+                      ? `${cached.name} — the sets saved on this device are ready to study.`
+                      : "The sets saved on this device are ready to study."}
+                  </p>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button type="button" className="btn btn-primary btn-sm" onClick={continueOffline}>
+                      <CloudOff />
+                      Continue offline
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => void tryConnection()}
+                      disabled={checking}
+                    >
+                      {checking ? "Checking…" : "Check connection"}
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
 
             <button
