@@ -14,6 +14,8 @@
     "test:openrouter": "tsx scripts/openrouter.test.mjs",
     "test:scan": "tsx --experimental-test-module-mocks scripts/scan-fallback.test.mjs",
     "test:srs": "tsx --test scripts/srs.test.mjs",
+    "test:offline": "tsx --test scripts/offline.test.mjs scripts/offline-client.test.mjs",
+    "test:offline-e2e": "tsx --test scripts/offline-e2e.test.mjs",
     "test:e2e": "tsx scripts/auth-e2e.mjs",
     "test:deck-editor": "tsx scripts/deck-editor.test.mjs"
   },

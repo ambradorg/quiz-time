@@ -12,6 +12,41 @@ import {
 import { extractDocxTextClient } from "@/lib/docx-client";
 import { extractPptxTextClient } from "@/lib/pptx-client";
 import {
+  applyLocalGrades,
+  bindConnectivityListeners,
+  bumpOutbox,
+  cacheDeckBundle,
+  cacheStatsSnapshot,
+  countDueNow,
+  fetchJson,
+  forgetDeckOffline,
+  formatSavedAgo,
+  HttpError,
+  isProbablyOnline,
+  OfflineError,
+  loadDeckDueCount,
+  loadDeckForStudy,
+  loadOfflineSessionList,
+  loadReviewData,
+  purgeOfflineData,
+  probeConnection,
+  readDecks,
+  readOfflineReadiness,
+  readSrsRecords,
+  readStatsSnapshot,
+  saveProgressLocally,
+  sendOrQueueWrite,
+} from "@/lib/offline";
+import { useOfflineIdentity, useOnlineStatus, useOutbox } from "@/lib/use-offline";
+import {
+  OfflineBadge,
+  OfflineChip,
+  OfflineNotice,
+  OfflinePinButton,
+  OfflineReadyCard,
+  OfflineRetryButton,
+} from "@/components/offline-ui";
+import {
   GRADE_LABELS,
   GRADE_SHORTCUTS,
   MAX_REQUEUES_PER_CARD,
@@ -42,6 +77,9 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  CloudDownload,
+  CloudOff,
+  CloudUpload,
   CircleCheckBig,
   CircleQuestionMark,
   CircleX,
@@ -2602,7 +2640,7 @@ function ReviewSession({
   const [flipped, setFlipped] = useState(false);
   const [graded, setGraded] = useState<GradedCard[]>([]);
   const [finished, setFinished] = useState(false);
-  const [syncState, setSyncState] = useState<"idle" | "saving" | "error">("idle");
+  const [syncState, setSyncState] = useState<"idle" | "saving" | "queued" | "error">("idle");
 
   // Cards answered "Again"/"Hard" are still in learning; they come back once
   // or twice more before the session ends (bounded so a single card can't
@@ -2616,32 +2654,35 @@ function ReviewSession({
     if (pending.current.length === 0) return true;
     const batch = pending.current;
     pending.current = [];
-    const body = JSON.stringify({ reviews: batch });
 
     // Leaving the page mid-session: hand the batch to the browser so a grade
-    // isn't lost on navigation (same trick the study-outcome sync uses).
-    if (beacon && typeof navigator !== "undefined" && navigator.sendBeacon) {
-      const sent = navigator.sendBeacon("/api/review", new Blob([body], { type: "application/json" }));
-      if (!sent) pending.current = batch;
-      return sent;
+    // isn't lost on navigation (same trick the study-outcome sync uses). Only
+    // when there's a network — offline the outbox below is the durable path.
+    if (
+      beacon &&
+      isProbablyOnline() &&
+      typeof navigator !== "undefined" &&
+      navigator.sendBeacon
+    ) {
+      const sent = navigator.sendBeacon(
+        "/api/review",
+        new Blob([JSON.stringify({ reviews: batch })], { type: "application/json" })
+      );
+      if (sent) return true;
     }
 
     setSyncState("saving");
-    try {
-      const res = await fetch("/api/review", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setSyncState("idle");
-      return true;
-    } catch {
-      // Offline: keep the grades queued and try again on the next answer.
+    const outcome = await sendOrQueueWrite("/api/review", "POST", { reviews: batch });
+    if (outcome === "rejected") {
+      // The server refused the batch — keep it in memory and offer a retry.
       pending.current = [...batch, ...pending.current];
       setSyncState("error");
       return false;
     }
+    // "queued" means the outbox now owns these grades; holding a second copy
+    // in memory would apply them twice when the network returns.
+    setSyncState(outcome === "queued" ? "queued" : "idle");
+    return true;
   }, []);
 
   const flush = useCallback(
@@ -2677,6 +2718,13 @@ function ReviewSession({
           dueAt: next.dueAt.toISOString(),
           deckTitle: current.deckTitle,
         },
+      ]);
+
+      // Keep the local schedule in step with what the screen just previewed,
+      // so an offline queue (and the "due" counts) stay truthful even if the
+      // grade only reaches the server later.
+      void applyLocalGrades([
+        { cardId: current.cardId, sessionId: current.sessionId, grade },
       ]);
 
       pending.current = [
@@ -2776,6 +2824,12 @@ function ReviewSession({
               the ones you aced — that&apos;s the schedule doing its job.
             </span>
           </p>
+          {syncState === "queued" && (
+            <p style={{ margin: "10px 0 0", fontSize: 12, color: "#4338ca", display: "flex", alignItems: "center", gap: 6 }}>
+              <CloudUpload size={14} aria-hidden />
+              You&apos;re offline — these grades are saved on this device and sync automatically.
+            </p>
+          )}
           {syncState === "error" && (
             <p style={{ margin: "10px 0 0", fontSize: 12, color: "#9f1239", display: "flex", alignItems: "center", gap: 6 }}>
               <CircleX size={14} aria-hidden />
@@ -2943,29 +2997,42 @@ function ReviewSession({
 // ─── The Review tab ───────────────────────────────────────────────────────────
 function ReviewPage({
   deckId,
+  online,
+  syncToken,
   onClearDeckFilter,
   onOpenDeck,
 }: {
   deckId: number | null;
+  online: boolean;
+  /** Bumped after a background sync so the queue refetches. */
+  syncToken: number;
   onClearDeckFilter: () => void;
   onOpenDeck: (id: number) => void;
 }) {
   const [data, setData] = useState<ReviewQueueData | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  /** The queue was rebuilt from this device's cache rather than the API. */
+  const [fromCache, setFromCache] = useState(false);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
       setLoading(true);
       try {
-        const res = await fetch(`/api/review${deckId ? `?sessionId=${deckId}` : ""}${deckId ? "&" : "?"}limit=50`, signal ? { signal } : undefined);
-        const payload = await res.json();
+        // `loadReviewData` is offline-aware: the API when reachable, the
+        // cached schedules (same scheduling rules) otherwise.
+        const payload = await loadReviewData(deckId, 50);
         if (signal?.aborted) return;
-        if (!res.ok) throw new Error(payload.error || "Failed to load the queue");
         setData(payload as ReviewQueueData);
-      } catch {
+        setFromCache(payload.offline);
+      } catch (error) {
         if (signal?.aborted) return;
-        showToast("Failed to load your review queue", CircleX);
+        showToast(
+          error instanceof OfflineError
+            ? "Nothing saved for offline review yet"
+            : "Failed to load your review queue",
+          CircleX
+        );
       } finally {
         if (!signal?.aborted) setLoading(false);
       }
@@ -2979,7 +3046,7 @@ function ReviewPage({
       await load(controller.signal);
     })();
     return () => controller.abort();
-  }, [load]);
+  }, [load, syncToken]);
 
   const finishSession = () => {
     setRunning(false);
@@ -3049,6 +3116,22 @@ function ReviewPage({
           <RefreshCw />
         </button>
       </div>
+
+      {fromCache && (
+        <OfflineNotice
+          title="Offline — reviewing the schedule saved on this device"
+          tone="warn"
+          action={
+            <OfflineRetryButton
+              label="Check"
+              onRetry={() => void probeConnection().then(() => load())}
+            />
+          }
+        >
+          Grades are queued here and applied to your schedule as soon as you
+          reconnect.
+        </OfflineNotice>
+      )}
 
       {/* Today's workload */}
       <div className="glass-card clay-streak" style={{ color: "white", padding: "18px 20px", display: "flex", alignItems: "center", gap: 16, marginBottom: 14 }}>
@@ -3203,6 +3286,8 @@ function QuizPage({
   cards,
   title,
   summary,
+  online,
+  offlineDeck,
   onSave,
   onBack,
   onEditDeck,
@@ -3211,12 +3296,23 @@ function QuizPage({
   cards: Flashcard[];
   title: string;
   summary: string;
+  online: boolean;
+  /** This deck was loaded from the device cache rather than the server. */
+  offlineDeck?: boolean;
   onSave?: (title: string) => Promise<void>;
   onBack: () => void;
   /** Open the deck editor for this saved deck (rename / add / edit / reorder cards). */
   onEditDeck?: () => void;
 }) {
   const [mode, setMode] = useState<QuizMode>("select");
+  /** One "you're offline" toast per deck visit, not one per answer. */
+  const queuedNotice = useRef(false);
+
+  const noteQueued = useCallback(() => {
+    if (queuedNotice.current) return;
+    queuedNotice.current = true;
+    showToast("Offline — your progress is saved here and syncs later", CloudUpload);
+  }, []);
 
   // Shared
   const [progress, setProgress] = useState<CardProgress[]>([]);
@@ -3242,16 +3338,33 @@ function QuizPage({
   const [startedAt, setStartedAt] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);
 
-  // Load progress from server if we have a sessionId
+  // Load progress from server if we have a sessionId; the snapshot saved on
+  // this device answers when there's no network.
   useEffect(() => {
-    if (sessionId) {
-      fetch(`/api/sessions/${sessionId}`)
-        .then((r) => r.json())
-        .then((data) => {
-          if (data.progress) setProgress(data.progress);
-        })
-        .catch(() => {});
-    }
+    if (!sessionId) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const data = await fetchJson<{ progress?: CardProgress[] }>(
+          `/api/sessions/${sessionId}`
+        );
+        if (alive && data.progress) setProgress(data.progress);
+      } catch {
+        const deck = await readDecks().then((all) => all.find((d) => d.id === sessionId));
+        if (alive && deck) {
+          setProgress(
+            deck.progress.map((p) => ({
+              cardId: p.cardId,
+              isKnown: p.isKnown,
+              attempts: p.attempts,
+            }))
+          );
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
   }, [sessionId]);
 
   // ── Spaced repetition (P4) ────────────────────────────────────────────────
@@ -3260,19 +3373,17 @@ function QuizPage({
   const [dueCount, setDueCount] = useState<number | null>(null);
   const [reviewCards, setReviewCards] = useState<DueCard[] | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewOffline, setReviewOffline] = useState(false);
 
   const refreshDueCount = useCallback(async () => {
     if (!sessionId) {
       setDueCount(null);
       return;
     }
-    try {
-      const res = await fetch(`/api/review?sessionId=${sessionId}&limit=1`);
-      const data = await res.json();
-      if (res.ok) setDueCount(data.counts?.due ?? 0);
-    } catch {
-      /* offline — the mode card just won't show a count */
-    }
+    // Offline this falls back to the cached schedule, so the badge still
+    // tells the truth about what's waiting.
+    const { due } = await loadDeckDueCount(sessionId);
+    setDueCount(due);
   }, [sessionId]);
 
   useEffect(() => {
@@ -3286,13 +3397,20 @@ function QuizPage({
     if (!sessionId) return;
     setReviewLoading(true);
     try {
-      const res = await fetch(`/api/review?sessionId=${sessionId}&limit=50`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to load the review queue");
+      const data = await loadReviewData(sessionId, 50);
       setReviewCards(data.queue as DueCard[]);
+      setReviewOffline(data.offline);
       setMode("review");
-    } catch {
-      showToast("Couldn't load your review queue", CircleX);
+      if (data.offline) {
+        showToast("Offline review — grades are saved and sync later", CloudUpload);
+      }
+    } catch (error) {
+      showToast(
+        error instanceof OfflineError
+          ? "This set isn't saved on this device yet"
+          : "Couldn't load your review queue",
+        CircleX
+      );
     } finally {
       setReviewLoading(false);
     }
@@ -3309,11 +3427,17 @@ function QuizPage({
     outcomeMode?: StudyOutcome["mode"]
   ) => {
     if (sessionId && cardId) {
-      fetch(`/api/sessions/${sessionId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cardId, isKnown }),
-      }).catch(() => {});
+      // Sent now when possible, queued durably in the outbox when not. Either
+      // way the UI never waits for the network.
+      void (async () => {
+        const outcome = await sendOrQueueWrite(`/api/sessions/${sessionId}`, "PATCH", {
+          cardId,
+          isKnown,
+        });
+        if (outcome === "queued") noteQueued();
+        // Keep the offline snapshot's "known" count honest too.
+        if (outcome !== "rejected") await saveProgressLocally(sessionId, cardId, isKnown);
+      })();
     }
     if (cardId) {
       setProgress((prev) => {
@@ -3579,8 +3703,13 @@ function QuizPage({
       await onSave(title);
       setSaved(true);
       showToast("Study set saved!", CircleCheckBig);
-    } catch {
-      showToast("Failed to save", CircleX);
+    } catch (error) {
+      // Offline, the save handler explains that a connection is needed
+      // ("your cards are kept as a draft") — pass that message through.
+      showToast(
+        error instanceof Error && error.message ? error.message : "Failed to save",
+        CircleX
+      );
     } finally {
       setSaving(false);
     }
@@ -3617,6 +3746,13 @@ function QuizPage({
 
   return (
     <div style={{ padding: "16px" }}>
+      {/* Offline: the deck (and every mode) came from this device's cache. */}
+      {offlineDeck && (
+        <OfflineNotice title="Offline study — saved on this device">
+          All four modes work. Progress, scores and review grades are kept here
+          and sync the moment you&apos;re back online.
+        </OfflineNotice>
+      )}
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
         <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ padding: "6px 10px", borderRadius: 12 }}>
@@ -3950,10 +4086,26 @@ function QuizPage({
 
 // ─── Sessions Page ────────────────────────────────────────────────────────────
 function SessionsPage({
+  online,
+  syncToken,
+  offlineBusy,
+  onDownloadAll,
+  onToggleOffline,
+  onOfflineChanged,
   onOpen,
   onReviewDeck,
   onEditDeck,
 }: {
+  online: boolean;
+  /** Bumped after a background sync so the list refreshes its numbers. */
+  syncToken: number;
+  offlineBusy: boolean;
+  /** Freeze every set on this device ("Download all"). */
+  onDownloadAll: () => void;
+  /** Save/remove one deck in offline storage (`saved` = already stored). */
+  onToggleOffline: (id: number, saved: boolean) => void;
+  /** Tell the app the offline storage changed (badges, Home card). */
+  onOfflineChanged: () => void;
   onOpen: (id: number) => void;
   /** Jump straight into the spaced-repetition queue for one deck. */
   onReviewDeck: (id: number) => void;
@@ -3963,45 +4115,104 @@ function SessionsPage({
   const [sessions, setSessions] = useState<StudySession[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<number | null>(null);
+  /** deck id → when its offline snapshot was taken (drives the badge/pin). */
+  const [offlineDecks, setOfflineDecks] = useState<Map<number, string>>(new Map());
+  /** True when the list below came from the device cache, not the server. */
+  const [fromCache, setFromCache] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
 
-  const load = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/sessions", signal ? { signal } : undefined);
-      const data = await res.json();
-      if (signal?.aborted) return;
-      setSessions(data.sessions || []);
-    } catch {
-      if (signal?.aborted) return;
-      showToast("Failed to load sessions", CircleX);
-    } finally {
-      if (!signal?.aborted) setLoading(false);
-    }
+  const refreshOfflineDecks = useCallback(async () => {
+    const decks = await readDecks();
+    setOfflineDecks(new Map(decks.map((deck) => [deck.id, deck.savedAt])));
   }, []);
+
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      setLoading(true);
+      try {
+        const data = await fetchJson<{ sessions: StudySession[] }>(
+          "/api/sessions",
+          signal ? { signal } : undefined
+        );
+        if (signal?.aborted) return;
+        setSessions(data.sessions || []);
+        setFromCache(false);
+        void refreshOfflineDecks();
+      } catch (error) {
+        if (signal?.aborted) return;
+        // The server answered but refused — that's not an offline situation.
+        if (error instanceof HttpError) {
+          showToast("Failed to load sessions", CircleX);
+          return;
+        }
+        // No network: rebuild the list from this device's snapshots.
+        const rows = await loadOfflineSessionList();
+        if (signal?.aborted) return;
+        setSessions(rows);
+        setFromCache(true);
+        await refreshOfflineDecks();
+        if (rows.length === 0) {
+          showToast("No sets saved on this device yet", CloudOff);
+        }
+      } finally {
+        if (!signal?.aborted) setLoading(false);
+      }
+    },
+    [refreshOfflineDecks]
+  );
 
   // Load on mount. The request is kicked off from an async IIFE so the effect
   // body never calls setState synchronously, and the fetch is aborted if the
-  // screen unmounts before it settles.
+  // screen unmounts before it settles. `syncToken` re-runs it after a
+  // background sync so counts stay current.
   useEffect(() => {
     const controller = new AbortController();
     void (async () => {
       await load(controller.signal);
     })();
     return () => controller.abort();
-  }, [load]);
+  }, [load, syncToken]);
 
   const handleDelete = async (id: number, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!online) {
+      showToast("Deleting needs a connection", CloudOff);
+      return;
+    }
     if (!confirm("Delete this study set?")) return;
     setDeleting(id);
     try {
-      await fetch(`/api/sessions/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/sessions/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // The deck is gone server-side — drop this device's copy too, so it
+      // can't come back from the dead offline.
+      await forgetDeckOffline(id);
       setSessions((prev) => prev.filter((s) => s.id !== id));
       showToast("Deleted!", Trash);
+      onOfflineChanged();
     } catch {
       showToast("Failed to delete", CircleX);
     } finally {
       setDeleting(null);
+    }
+  };
+
+  const handleEdit = (id: number | null) => {
+    if (!online) {
+      showToast("Editing sets needs a connection", CloudOff);
+      return;
+    }
+    onEditDeck(id);
+  };
+
+  const handleReconnect = async () => {
+    setReconnecting(true);
+    try {
+      const back = await probeConnection();
+      await load();
+      showToast(back ? "Back online!" : "Still offline — nothing to worry about", back ? CircleCheckBig : CloudOff);
+    } finally {
+      setReconnecting(false);
     }
   };
 
@@ -4025,8 +4236,22 @@ function SessionsPage({
         </h2>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <button
+            className="btn btn-white-clay btn-sm"
+            onClick={onDownloadAll}
+            disabled={!online || offlineBusy}
+            style={{ padding: "6px 10px" }}
+            aria-label="Save every set for offline study"
+            title={online ? "Save every set for offline study" : "Connect to save sets offline"}
+          >
+            {offlineBusy ? (
+              <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2, margin: 0 }} aria-hidden />
+            ) : (
+              <CloudDownload />
+            )}
+          </button>
+          <button
             className="btn btn-primary btn-sm"
-            onClick={() => onEditDeck(null)}
+            onClick={() => handleEdit(null)}
             style={{ padding: "6px 12px" }}
           >
             <Plus />
@@ -4037,6 +4262,16 @@ function SessionsPage({
           </button>
         </div>
       </div>
+
+      {fromCache && (
+        <OfflineNotice
+          title="Offline — showing the sets saved on this device"
+          action={<OfflineRetryButton onRetry={() => void handleReconnect()} busy={reconnecting} />}
+        >
+          Every study mode works here. Answers, grades and progress are kept on this
+          device and sync the moment you&apos;re back online.
+        </OfflineNotice>
+      )}
 
       {loading ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -4053,7 +4288,7 @@ function SessionsPage({
           <p style={{ color: "var(--text-muted)", fontSize: 14, margin: "0 0 16px" }}>
             Upload a PDF or image to create your first flashcard set — or build one yourself, card by card.
           </p>
-          <button className="btn btn-primary btn-sm" onClick={() => onEditDeck(null)}>
+          <button className="btn btn-primary btn-sm" onClick={() => handleEdit(null)}>
             <PenLine />
             Create manually
           </button>
@@ -4073,7 +4308,11 @@ function SessionsPage({
                 animationDelay: `${i * 0.05}s`,
                 transition: "transform 0.15s",
               }}
-              onClick={() => onOpen(session.id)}
+              onClick={() =>
+                offlineDecks.has(session.id) || online
+                  ? onOpen(session.id)
+                  : showToast("This set isn't saved on this device yet", CloudOff)
+              }
               onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.98)")}
               onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
               onTouchStart={(e) => (e.currentTarget.style.transform = "scale(0.98)")}
@@ -4118,9 +4357,20 @@ function SessionsPage({
                       {session.dueCount} due
                     </span>
                   )}
+                  {offlineDecks.has(session.id) && (
+                    <OfflineBadge savedAt={offlineDecks.get(session.id)} />
+                  )}
                 </p>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                <OfflinePinButton
+                  title={session.title}
+                  saved={offlineDecks.has(session.id)}
+                  busy={offlineBusy}
+                  onToggle={() =>
+                    onToggleOffline(session.id, offlineDecks.has(session.id))
+                  }
+                />
                 {Boolean(session.dueCount) && (
                   <button
                     className="btn btn-primary btn-sm"
@@ -4136,10 +4386,10 @@ function SessionsPage({
                 )}
                 <button
                   className="btn btn-ghost btn-sm"
-                  style={{ padding: "6px" }}
+                  style={{ padding: "6px", opacity: online ? 1 : 0.5 }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    onEditDeck(session.id);
+                    handleEdit(session.id);
                   }}
                   aria-label={`Edit ${session.title}`}
                 >
@@ -4637,21 +4887,45 @@ function masteryColor(pct: number): string {
   return "#6366f1";
 }
 
-function StatsPage({ onOpenDeck }: { onOpenDeck: (id: number) => void }) {
+function StatsPage({
+  onOpenDeck,
+  online,
+  syncToken,
+}: {
+  onOpenDeck: (id: number) => void;
+  online: boolean;
+  /** Bumped after a background sync so freshly recorded answers show up. */
+  syncToken: number;
+}) {
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
+  /** When the last synced copy was taken — stats are server-side aggregates. */
+  const [cachedAt, setCachedAt] = useState<string | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/stats", signal ? { signal } : undefined);
-      const data = await res.json();
+      const data = await fetchJson<StatsData>("/api/stats", signal ? { signal } : undefined);
       if (signal?.aborted) return;
-      if (!res.ok) throw new Error(data.error || "Failed to load stats");
-      setStats(data as StatsData);
-    } catch {
+      setStats(data);
+      setCachedAt(null);
+      // Keep the numbers for the next offline visit (they are aggregates the
+      // client can't recompute without the whole history).
+      void cacheStatsSnapshot(data);
+    } catch (error) {
       if (signal?.aborted) return;
-      showToast("Failed to load stats", CircleX);
+      if (error instanceof HttpError) {
+        showToast("Failed to load stats", CircleX);
+        return;
+      }
+      const snapshot = await readStatsSnapshot();
+      if (signal?.aborted) return;
+      if (snapshot) {
+        setStats(snapshot.data as StatsData);
+        setCachedAt(snapshot.savedAt);
+      } else {
+        showToast("Failed to load stats", CircleX);
+      }
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
@@ -4665,7 +4939,7 @@ function StatsPage({ onOpenDeck }: { onOpenDeck: (id: number) => void }) {
       await load(controller.signal);
     })();
     return () => controller.abort();
-  }, [load]);
+  }, [load, syncToken]);
 
   if (loading && !stats) {
     return (
@@ -4765,6 +5039,21 @@ function StatsPage({ onOpenDeck }: { onOpenDeck: (id: number) => void }) {
           <RefreshCw />
         </button>
       </div>
+
+      {cachedAt && (
+        <OfflineNotice
+          title={online ? "Couldn't reach the server" : "Offline — last synced stats"}
+          action={
+            <OfflineRetryButton
+              label={online ? "Retry" : "Check"}
+              onRetry={() => void probeConnection().then(() => load())}
+            />
+          }
+        >
+          These numbers were synced {formatSavedAgo(cachedAt)}. Answers recorded
+          since then are safe on this device and appear after the next sync.
+        </OfflineNotice>
+      )}
 
       {/* Streak hero */}
       <div
@@ -4986,6 +5275,12 @@ function HomePage({
   onReview,
   onCreateManual,
   dueCount,
+  online,
+  offlineDeckCount,
+  offlineCardCount,
+  offlineSavedAt,
+  offlineBusy,
+  onDownloadAll,
 }: {
   onUpload: () => void;
   onSessions: () => void;
@@ -4993,6 +5288,12 @@ function HomePage({
   /** Open the deck editor with a blank, hand-built deck. */
   onCreateManual: () => void;
   dueCount: number;
+  online: boolean;
+  offlineDeckCount: number;
+  offlineCardCount: number;
+  offlineSavedAt: string | null;
+  offlineBusy: boolean;
+  onDownloadAll: () => void;
 }) {
   return (
     <div style={{ padding: "20px 16px" }}>
@@ -5040,6 +5341,17 @@ function HomePage({
           Start Studying
         </button>
       </div>
+
+      {/* Offline study: what's on this device, and the one-tap download. */}
+      <OfflineReadyCard
+        deckCount={offlineDeckCount}
+        cardCount={offlineCardCount}
+        savedAt={offlineSavedAt}
+        online={online}
+        busy={offlineBusy}
+        onDownloadAll={onDownloadAll}
+        onOpenSets={onSessions}
+      />
 
       {/* Spaced repetition nudge — only when there is actually work waiting. */}
       {dueCount > 0 && (
@@ -5306,32 +5618,41 @@ function writeOutcomeCache(outcomes: StudyOutcome[]) {
  */
 async function syncOutcomes(outcomes: StudyOutcome[], useBeacon = false): Promise<StudyOutcome[]> {
   if (outcomes.length === 0) return outcomes;
-  const body = JSON.stringify({ results: outcomes });
-  try {
-    if (useBeacon && typeof navigator !== "undefined" && navigator.sendBeacon) {
-      const sent = navigator.sendBeacon(
-        "/api/stats/results",
-        new Blob([body], { type: "application/json" })
-      );
-      // Beacon accepted for delivery → optimistically clear the cache.
-      return sent ? [] : outcomes;
-    }
-    const res = await fetch("/api/stats/results", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-    });
-    return res.ok ? [] : outcomes;
-  } catch {
-    return outcomes; // Offline / network error — keep the cache, retry later.
+  const payload = { results: outcomes };
+
+  // Leaving the page: hand the batch to the browser so it survives navigation.
+  // Only worth it when there *is* a network — offline the outbox below is the
+  // durable path (a beacon that can't be delivered is simply lost).
+  if (
+    useBeacon &&
+    isProbablyOnline() &&
+    typeof navigator !== "undefined" &&
+    navigator.sendBeacon
+  ) {
+    const sent = navigator.sendBeacon(
+      "/api/stats/results",
+      new Blob([JSON.stringify(payload)], { type: "application/json" })
+    );
+    // Beacon accepted for delivery → optimistically clear the cache.
+    if (sent) return [];
   }
+
+  // Sent, queued in the outbox, or (rarely) refused. Only a refusal keeps the
+  // localStorage copy, so nothing is ever silently dropped.
+  const outcome = await sendOrQueueWrite("/api/stats/results", "POST", payload);
+  return outcome === "rejected" ? outcomes : [];
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 function IOSInstallPrompt() {
   const [visible, setVisible] = useState(false);
   const [installEvent, setInstallEvent] = useState<Event | null>(null);
-  const [isAndroid, setIsAndroid] = useState(false);
+  // Lazy (not set from the effect): the banner renders nothing until `visible`
+  // flips, so deriving this during the first client render is both correct and
+  // free of a needless cascading render.
+  const [isAndroid] = useState(
+    () => typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent)
+  );
 
   useEffect(() => {
     // iOS Safari does not support beforeinstallprompt, so it needs manual
@@ -5344,8 +5665,12 @@ function IOSInstallPrompt() {
     const android = /Android/i.test(navigator.userAgent);
     const dismissed = window.localStorage.getItem("quiztime-install-dismissed");
 
-    setIsAndroid(android);
-    if (!standalone && !dismissed && isIOS) setVisible(true);
+    // Shown one frame after mount: the first render must stay empty so it
+    // matches the server's HTML, and defers the state update out of the effect
+    // body (a synchronous setState here would cascade renders).
+    const frame = requestAnimationFrame(() => {
+      if (!standalone && !dismissed && isIOS) setVisible(true);
+    });
 
     const handleBeforeInstall = (event: Event) => {
       event.preventDefault();
@@ -5353,7 +5678,10 @@ function IOSInstallPrompt() {
       if (!standalone && !dismissed && android) setVisible(true);
     };
     window.addEventListener("beforeinstallprompt", handleBeforeInstall);
-    return () => window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
+    };
   }, []);
 
   if (!visible) return null;
@@ -5423,20 +5751,44 @@ export default function App() {
   const [reviewDeckId, setReviewDeckId] = useState<number | null>(null);
   const [dueCount, setDueCount] = useState(0);
 
-  // Sign-in state (Auth.js). `data` is null while unauthenticated.
+  // Sign-in state (Auth.js). `data` is null while unauthenticated — and also
+  // while offline, which is why the identity falls back to the cached profile
+  // (`useOfflineIdentity`) so "open my account offline" works.
   const { data: session, status } = useSession();
-  const user = session?.user;
+  const online = useOnlineStatus();
+  const identity = useOfflineIdentity({ user: session?.user ?? null, status });
+  const user = identity.user;
   const signedIn = Boolean(user?.id);
+  const outbox = useOutbox();
+
+  // Whether the open deck came from this device's cache (drives the notice and
+  // keeps the user from wondering why edits are disabled).
+  const [activeSessionOffline, setActiveSessionOffline] = useState(false);
+
+  // What this device can do with no signal: how many sets/cards are cached and
+  // how fresh that copy is.
+  const [offlineInfo, setOfflineInfo] = useState<{
+    deckCount: number;
+    cardCount: number;
+    savedAt: string | null;
+  }>({ deckCount: 0, cardCount: 0, savedAt: null });
+  const [offlineBusy, setOfflineBusy] = useState(false);
+
+  const refreshOfflineInfo = useCallback(async () => {
+    const { deckCount, cardCount, savedAt } = await readOfflineReadiness();
+    setOfflineInfo({ deckCount, cardCount, savedAt });
+  }, []);
 
   // Keep the "due today" badge honest: refetch on mount, on every sign-in and
   // whenever the user lands on another tab (it is a single lightweight query).
+  // Offline, the same number is recomputed from the cached schedules.
   const refreshDueCount = useCallback(async () => {
     try {
-      const res = await fetch("/api/review?limit=1");
-      const data = await res.json();
-      if (res.ok) setDueCount(data.counts?.due ?? 0);
+      const data = await fetchJson<{ counts?: { due?: number } }>("/api/review?limit=1");
+      setDueCount(data.counts?.due ?? 0);
     } catch {
-      /* offline — keep the last known count */
+      const rows = await readSrsRecords();
+      setDueCount(countDueNow(rows));
     }
   }, []);
 
@@ -5444,8 +5796,68 @@ export default function App() {
     if (!signedIn) return;
     void (async () => {
       await refreshDueCount();
+      await refreshOfflineInfo();
     })();
-  }, [refreshDueCount, signedIn, tab]);
+  }, [refreshDueCount, refreshOfflineInfo, signedIn, tab]);
+
+  // ── Offline plumbing ──────────────────────────────────────────────────────
+  // `syncToken` bumps after a drain so open lists can refetch their data
+  // without remounting the quiz (which would lose a session in progress).
+  const [syncToken, setSyncToken] = useState(0);
+
+  useEffect(() => {
+    bindConnectivityListeners();
+  }, []);
+
+  // Held in a ref so the drain effect can depend on `online` alone (depending
+  // on the callback would re-run it every time the pending count changes).
+  const flushRef = useRef(outbox.flush);
+  useEffect(() => {
+    flushRef.current = outbox.flush;
+  }, [outbox.flush]);
+
+  // Drain queued writes whenever the connection comes back.
+  useEffect(() => {
+    if (!signedIn || !online) return;
+    void (async () => {
+      const result = await flushRef.current();
+      if (result.syncedEntries > 0) {
+        showToast(
+          `Synced ${result.syncedEntries} offline answer${result.syncedEntries === 1 ? "" : "s"}`,
+          CloudUpload
+        );
+        setSyncToken((token) => token + 1);
+        void refreshDueCount();
+        void refreshOfflineInfo();
+      }
+    })();
+  }, [online, signedIn, refreshDueCount, refreshOfflineInfo]);
+
+  // The service worker keeps syncing while the app is closed; when it reports
+  // back (or queues a write it intercepted), refresh what the UI shows.
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; synced?: number } | null;
+      if (!data) return;
+      if (data.type === "OUTBOX_QUEUED") bumpOutbox();
+      if (data.type === "OUTBOX_SYNCED") {
+        bumpOutbox();
+        const synced = data.synced ?? 0;
+        if (synced > 0) {
+          showToast(
+            `Synced ${synced} offline answer${synced === 1 ? "" : "s"}`,
+            CloudUpload
+          );
+          setSyncToken((token) => token + 1);
+          void refreshDueCount();
+          void refreshOfflineInfo();
+        }
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  }, [refreshDueCount, refreshOfflineInfo]);
 
   // Check if the AI key is configured via the lightweight /api/config
   // endpoint. (The old probe — an empty POST to /api/scan — always got
@@ -5496,6 +5908,12 @@ export default function App() {
 
   const handleSaveSession = async (title: string) => {
     if (!pendingCards) return;
+    // Creating a set is a server-side operation (AI + Postgres ids): offline we
+    // say so plainly instead of pretending. The draft itself is already safe in
+    // localStorage, so nothing is lost.
+    if (!online) {
+      throw new Error("Saving needs a connection — your cards are kept as a draft.");
+    }
     const res = await fetch("/api/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -5516,18 +5934,89 @@ export default function App() {
 
   const handleOpenSession = async (id: number) => {
     try {
-      const res = await fetch(`/api/sessions/${id}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      // Network first; the snapshot saved on this device is the offline answer.
+      const data = await loadDeckForStudy(id);
       setActiveSessionId(id);
       setActiveSessionCards(data.cards);
       setActiveSessionTitle(data.session.title);
       setActiveSessionSummary(data.session.summary ?? "");
+      setActiveSessionOffline(data.offline);
       setPendingCards(null);
       setDeckKey((k) => k + 1);
       setTab("quiz");
+      if (data.offline) {
+        showToast("Offline — studying the copy saved on this device", CloudDownload);
+      }
+      void refreshOfflineInfo();
     } catch {
       showToast("Failed to load session", CircleX);
+    }
+  };
+
+  /** One tap: freeze every set (cards, progress, schedules) on this device. */
+  const handleDownloadAll = useCallback(async () => {
+    if (!online) {
+      showToast("Connect to the internet to save your sets", CloudOff);
+      return;
+    }
+    setOfflineBusy(true);
+    try {
+      const result = await cacheDeckBundle(undefined, { pinned: true });
+      await refreshOfflineInfo();
+      const sets = `${result.deckCount} set${result.deckCount === 1 ? "" : "s"}`;
+      const cards = `${result.cardCount} card${result.cardCount === 1 ? "" : "s"}`;
+      showToast(
+        `${sets} · ${cards} ready offline${result.truncated ? " (some were too big to save)" : ""}`,
+        CloudDownload
+      );
+    } catch {
+      showToast("Couldn't download your sets", CircleX);
+    } finally {
+      setOfflineBusy(false);
+    }
+  }, [online, refreshOfflineInfo]);
+
+  /** Per-deck offline toggle used by the "My Sets" rows. */
+  const handleToggleDeckOffline = useCallback(
+    async (deckId: number, saved: boolean) => {
+      setOfflineBusy(true);
+      try {
+        if (saved) {
+          await forgetDeckOffline(deckId);
+          showToast("Removed from offline storage", CloudOff);
+        } else {
+          if (!online) {
+            showToast("Saving for offline needs a connection", CloudOff);
+            return;
+          }
+          const result = await cacheDeckBundle(deckId, { pinned: true });
+          showToast(
+            `Saved ${result.cardCount} card${result.cardCount === 1 ? "" : "s"} for offline`,
+            CloudDownload
+          );
+        }
+        await refreshOfflineInfo();
+        setSyncToken((token) => token + 1);
+      } catch {
+        showToast("Couldn't update offline storage", CircleX);
+      } finally {
+        setOfflineBusy(false);
+      }
+    },
+    [online, refreshOfflineInfo]
+  );
+
+  /**
+   * Sign out wipes this device's offline copy first (decks, queued answers and
+   * the cached session), then ends the session server-side when reachable. With
+   * no network the local copy is what matters — the reload lands on /login.
+   */
+  const handleSignOut = async () => {
+    await purgeOfflineData();
+    if (online) {
+      await signOut({ callbackUrl: "/login" });
+    } else {
+      window.location.replace("/login");
     }
   };
 
@@ -5544,10 +6033,13 @@ export default function App() {
     }
   };
 
-  // First-visit gate: unsigned visitors (and the session-loading splash)
-  // see the login page with the large logo — never the rest of the app.
-  if (status === "loading" || !signedIn) {
-    return <LoginPage loading={status === "loading"} />;
+  // First-visit gate: unsigned visitors (and the session-loading splash) see
+  // the login page with the large logo — never the rest of the app. Offline
+  // starts resolve through the cached profile, so a saved account boots
+  // straight into the app; the login page itself offers "Continue offline"
+  // for the case where the user has to ask for it.
+  if (!identity.ready || !signedIn) {
+    return <LoginPage loading={!identity.ready || status === "loading"} />;
   }
 
   const isViewingSession = activeSessionCards !== null && activeSessionId !== null && !pendingCards;
@@ -5576,10 +6068,19 @@ export default function App() {
           cards={cards}
           title={title}
           summary={summary}
+          online={online}
+          offlineDeck={activeSessionOffline}
           onSave={!isViewingSession ? handleSaveSession : undefined}
           onEditDeck={
             isViewingSession && activeSessionId !== null
-              ? () => setDeckEditor({ sessionId: activeSessionId, origin: "quiz" })
+              ? () => {
+                  // Editing a deck is a server-side operation.
+                  if (!online) {
+                    showToast("Editing sets needs a connection", CloudOff);
+                    return;
+                  }
+                  setDeckEditor({ sessionId: activeSessionId, origin: "quiz" });
+                }
               : undefined
           }
           onBack={() => {
@@ -5599,6 +6100,12 @@ export default function App() {
           onReview={() => setTab("review")}
           onCreateManual={() => setDeckEditor({ sessionId: null, origin: "home" })}
           dueCount={dueCount}
+          online={online}
+          offlineDeckCount={offlineInfo.deckCount}
+          offlineCardCount={offlineInfo.cardCount}
+          offlineSavedAt={offlineInfo.savedAt}
+          offlineBusy={offlineBusy}
+          onDownloadAll={handleDownloadAll}
         />
       );
     }
@@ -5607,6 +6114,14 @@ export default function App() {
       if (!hasApiKey) return <SetupPage />;
       return (
         <>
+          {!online && (
+            <div style={{ padding: "14px 16px 0" }}>
+              <OfflineNotice title="You're offline">
+                Generating new sets needs a connection. Your saved sets are still
+                available under <strong>My Sets</strong>.
+              </OfflineNotice>
+            </div>
+          )}
           {draft && !pendingCards && (
             <div
               className="animate-fade-in"
@@ -5653,6 +6168,12 @@ export default function App() {
       if (!signedIn) return <SignInPrompt feature="see your study sets" />;
       return (
         <SessionsPage
+          online={online}
+          syncToken={syncToken}
+          offlineBusy={offlineBusy}
+          onDownloadAll={handleDownloadAll}
+          onToggleOffline={handleToggleDeckOffline}
+          onOfflineChanged={() => setSyncToken((token) => token + 1)}
           onOpen={handleOpenSession}
           onReviewDeck={(id) => {
             setReviewDeckId(id);
@@ -5664,13 +6185,15 @@ export default function App() {
     }
     if (tab === "stats") {
       if (!signedIn) return <SignInPrompt feature="see your study stats" />;
-      return <StatsPage onOpenDeck={handleOpenSession} />;
+      return <StatsPage onOpenDeck={handleOpenSession} online={online} syncToken={syncToken} />;
     }
     if (tab === "review") {
       if (!signedIn) return <SignInPrompt feature="review your cards" />;
       return (
         <ReviewPage
           deckId={reviewDeckId}
+          online={online}
+          syncToken={syncToken}
           onClearDeckFilter={() => setReviewDeckId(null)}
           onOpenDeck={(id) => setReviewDeckId((current) => (current === id ? null : id))}
         />
@@ -5710,7 +6233,14 @@ export default function App() {
           <p className="app-developer">Developed by: John Lloyd Ambrad</p>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-          {!hasApiKey && signedIn && (
+          {/* Offline badge + "N answers waiting to sync" (tap to sync now). */}
+          <OfflineChip
+            online={online}
+            pending={outbox.count}
+            syncing={outbox.syncing}
+            onSync={() => void outbox.flush()}
+          />
+          {!hasApiKey && signedIn && online && (
             <span style={{ fontSize: 12, background: "#fef3c7", color: "#92400e", padding: "4px 10px", borderRadius: 999, fontWeight: 600 }}>
               <Settings size={12} className="icon-inline" aria-hidden /> Setup
             </span>
@@ -5744,10 +6274,11 @@ export default function App() {
               <span style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {user.name?.split(" ")[0] ?? "Signed in"}
               </span>
-              {/* Full reload on sign-out clears all in-memory deck state. */}
+              {/* Full reload on sign-out clears all in-memory deck state, and
+                  the handler wipes this device's offline copy first. */}
               <button
                 className="btn btn-ghost btn-sm"
-                onClick={() => void signOut({ callbackUrl: "/login" })}
+                onClick={() => void handleSignOut()}
                 style={{ padding: "4px 8px", fontSize: 11, flexShrink: 0 }}
                 aria-label="Sign out"
               >

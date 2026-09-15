@@ -23,6 +23,10 @@ QuizTime turns them into flashcards, then lets you review them four ways:
 - **Deck Editing** – rename any deck, add / edit / delete / reorder its cards,
   or build a **manual deck** from scratch (no AI, no upload) — see
   [Deck editing](#deck-editing).
+- **Offline Study** – save your sets to the device and open them with no signal
+  at all: the account, all four study modes, progress and the spaced-repetition
+  queue keep working, and everything you answer syncs when you're back online —
+  see [Offline study](#offline-study).
 
 ## Uploading
 
@@ -330,6 +334,97 @@ exists. The unique index is what makes `POST /api/review`'s upsert atomic.
 learning and upcoming cards) so the Review tab can be previewed without a real
 Google login.
 
+## Offline study
+
+QuizTime is a PWA, and it keeps working when the network doesn't. Open the app
+on a plane, in a tunnel or on a dead Wi-Fi and you can still get into your
+account, browse your saved sets and study them — answers, grades and progress
+are queued on the device and replayed automatically once you're back.
+
+### What works offline
+
+| Works offline | Needs a connection |
+| --- | --- |
+| Opening the app and the signed-in account (cached profile) | Signing in / out for the first time |
+| **My Study Sets** (list, counts, "due" badges) | Creating a set (upload + AI) |
+| Study, Exam, Identification, Enumeration modes | Renaming, editing, deleting a deck |
+| Spaced Review with real SM-2 scheduling | Downloading a set you never opened |
+| "Got it / Still learning" progress, scores, streaks | Stats aggregates (the last synced copy is shown) |
+
+New *material* still needs the network — the AI lives on the server, and deck
+ids are assigned by Postgres. Studying what you already have does not.
+
+### How it fits together
+
+1. **App shell (service worker, `public/sw.js`).** Navigations and build assets
+   are cached, so an installed QuizTime opens with no network. The one API
+   response the worker caches is `GET /api/auth/session` — Auth.js fetches that
+   by itself, and without it "signed in offline" is impossible. Only responses
+   that actually contain a user are stored, and signing out purges them.
+2. **Snapshots (IndexedDB `quiztime-offline`).** Decks, cards, progress and the
+   `card_reviews` schedules are frozen client-side by `src/lib/offline.ts`.
+   A deck is cached automatically when you open it online; **Save for offline**
+   on a deck row (or **Download all** on the Home card / My Sets header) pins it
+   deliberately. Everything is per-account and wiped on sign-out.
+3. **Outbox (same database, `outbox` store).** The three writes that are safe to
+   apply late — `POST /api/review`, `POST /api/stats/results` and
+   `PATCH /api/sessions/[id]` card progress — are queued instead of lost when
+   the request can't be delivered, then replayed in order and batched to the
+   API's 100-entry limit. The worker also drains it in the background
+   (`Background Sync`, Chrome/Edge/Android); on iOS the app drains on launch,
+   on `online` and on focus.
+
+Reads never depend on the worker: `loadDeckForStudy`, `loadOfflineSessionList`
+and `loadReviewData` try the API first and fall back to the snapshot, which is
+why a page only ever has to show an "offline" badge, not branch its logic.
+
+The offline review queue is the server's twin (`buildOfflineReviewData` in
+`src/lib/offline-core.ts`): overdue cards first, then a daily helping of new
+cards (`NEW_CARDS_PER_DAY`), and grades are scheduled locally with the same
+pure `scheduleCard()` the API uses, so the client preview and the replayed
+result agree.
+
+### Where it lives
+
+| File | Role |
+| --- | --- |
+| `src/lib/offline-core.ts` | Pure logic: snapshots, offline review queue, outbox batching/draining, backoff. Unit-tested. |
+| `src/lib/offline.ts` | Browser glue: IndexedDB (+ in-memory fallback), connectivity, the with-fallback loaders, outbox, purge. |
+| `src/lib/use-offline.ts` | `useOnlineStatus`, `useOfflineIdentity` (offline sign-in), `useOutbox`. |
+| `src/components/offline-ui.tsx` | Offline chip, notices, per-deck pin button, Home "Offline study" card. |
+| `src/app/api/offline/bundle/route.ts` | `GET /api/offline/bundle[?sessionId=]` — everything a device needs in one request (≤200 decks / 5000 cards, reports `truncated`). |
+| `public/sw.js` | App shell, cached session, background replay of the outbox. |
+
+### Good to know
+
+- **Replay is at-least-once.** A request that never reached the server is
+  retried, so an answer graded in the exact moment the connection dropped can
+  count twice. The scheduler is forgiving (one extra grade ≈ one extra
+  repetition), and queued grades always replay in the order you answered them.
+- **Deletes win.** Deleting a deck removes its offline copy immediately, so a
+  deleted set can't come back from the cache.
+- **Storage is best-effort.** `navigator.storage.persist()` is requested when
+  you save sets; a browser low on disk may still evict the cache. Signing out
+  clears it deliberately.
+- **Testing it:** `npm run dev`, open the app, then DevTools → Network →
+  *Offline* (or turn on airplane mode) and reload — the app should come up with
+  the offline chip, your saved sets, and a "waiting to sync" counter. The worker
+  is registered in development too (`/sw.js?dev=1`), where it keeps the shell
+  cacheable for offline testing but always lets the dev server win, so a cached
+  chunk can never hide your changes.
+- **Tests:** `npm run test:offline` (pure core + the browser glue with a faked
+  `window`/`fetch`), and `npm run test:offline-e2e` for the full round trip
+  against a real server and database — see
+  [E2E tests](#e2e-tests-offline-friendly). The worker itself is run, not just
+  read: `public/sw.js` is evaluated in a fake `ServiceWorkerGlobalScope` with
+  minimal Cache Storage + IndexedDB fakes, and its handlers are dispatched with
+  real `Request`/`Response` objects — that is what pins down the cached session
+  (sign in online → go offline → the account still opens), the 202 that an
+  offline grade gets instead of a failure, the shell fallback for deep links,
+  and the background drain batching two grades into one request. A contract
+  test additionally proves its IndexedDB names, sync tag and `planFlush`
+  batching still match `src/lib/offline-core.ts`.
+
 ## Accounts & Sign-in with Google
 
 Visitors see a **login page first** (large QuizTime logo + Continue with
@@ -481,7 +576,18 @@ node scripts/setup-test-db.mjs          # creates db + applies all migrations (i
 npm run build && npm run start          # or: npm run dev
 # 2. in another shell (reuses a running server, or spawns its own):
 BASE_URL=http://127.0.0.1:3000 npm run test:e2e
+BASE_URL=http://127.0.0.1:3000 npm run test:offline-e2e   # offline round trip, see below
 ```
+
+`scripts/offline-e2e.test.mjs` is the offline counterpart: it drives the real
+client module (`src/lib/offline.ts`) over HTTP with a minted session cookie,
+fakes only the browser (`window`, `navigator.onLine`, and a `fetch` that starts
+throwing to simulate losing the network), and then checks the *database* to
+prove the answers landed. One pass covers: the bundle freezing decks + cards +
+schedules, the deck list and review queue resolving from the snapshot with the
+network down, grades/outcomes/progress queueing locally, the drain putting them
+back in `card_reviews` / `study_results` / `card_progress`, a dead session
+keeping the queue instead of dropping it, and sign-out purging the device copy.
 
 Three suites need neither a database nor an API key and cover the model
 failover described above:
@@ -538,22 +644,37 @@ Vercel, change the env var and redeploy/restart the functions.
 The app is installable (`public/manifest.json`, `"id": "/"` keeps the install
 identity stable), and `public/sw.js` keeps installed home-screen apps in sync
 with every deploy — each deploy replaces content-hashed assets, so stale HTML
-would 404 its CSS/JS and open unstyled. Strategy (registered in production only
-by `src/components/register-sw.tsx`):
+would 404 its CSS/JS and open unstyled. It is also what makes
+[offline study](#offline-study) possible. Strategy (registered by
+`src/components/register-sw.tsx`; in development as `/sw.js?dev=1`, where the
+dev server always wins but the shell stays cacheable for offline testing):
 
 - **Navigations (HTML): network-first.** Every launch fetches fresh HTML; the
   cache is only an offline fallback (`caches.match("/")`).
 - **Immutable assets (`/_next/static/*`, `/images/*`): cache-first**, filled on
-  first fetch.
-- **`/api/*` and non-GET requests: never cached.**
+  first fetch (in dev: network-first, cached only as the offline fallback).
+- **`GET /api/auth/session`: network-first, cached when it contains a user**,
+  so the signed-in account survives with no network. Purged on sign-out.
+- **Every other `/api/*` response is never cached** — the app's IndexedDB
+  snapshots are the single offline source of truth for deck data.
 - **`/sw.js` itself is served with `Cache-Control: no-cache, no-store,
   must-revalidate`** plus `Service-Worker-Allowed: /` (see `next.config.ts`),
   so browsers detect new versions immediately.
 - **`skipWaiting()` + `clients.claim()`** activate a new worker right away, and
   activation purges every cache that isn't the current one.
 - To force-invalidate all cached content, **bump `VERSION` in `public/sw.js`**
-  (e.g. `quiztime-v2`) — the cache namespace changes and old caches are deleted
+  (e.g. `quiztime-v3`) — the cache namespace changes and old caches are deleted
   on activation.
+- **Failed non-GET requests to the three replayable routes** (`POST /api/review`,
+  `POST /api/stats/results`, `PATCH /api/sessions/[id]` progress) are queued in
+  IndexedDB and answered with `202 {queued:true}`; a `sync` event replays them
+  with no tab open. Everything else fails normally, because it can't be applied
+  later.
+- **`quiztime-outbox` is the Background Sync tag** the app registers; the worker
+  posts `{type:"OUTBOX_SYNCED", synced, remaining}` to open windows so the UI
+  can refresh and toast. Store names, the queued-write shape and the batching
+  rules mirror `src/lib/offline-core.ts` — `scripts/offline.test.mjs` fails if
+  the two ever drift apart.
 
 ### Upload sizes on Vercel
 
@@ -579,6 +700,9 @@ npm run db:setup-test # create/reset the local test db + apply migrations
 npm run test:failover   # failover-engine unit tests (no db, no network)
 npm run test:openrouter # OpenRouter adapter tests (fake endpoint)
 npm run test:scan       # /api/scan failover tests (real SDK, fake endpoints)
+npm run test:srs        # spaced-repetition scheduler tests (no db, no network)
+npm run test:offline    # offline core + browser glue + service-worker contract
+npm run test:offline-e2e # offline round trip against a real server + database
 npm run test:e2e        # auth/stats e2e suite (minted JWTs, real HTTP)
 ```
 
