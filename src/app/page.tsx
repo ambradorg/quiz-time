@@ -9,6 +9,8 @@ import {
   PDF_TEXT_CHAR_LIMIT,
   PDF_MIN_TEXT_CHARS,
 } from "@/lib/pdf-text";
+import { extractDocxTextClient } from "@/lib/docx-client";
+import { extractPptxTextClient } from "@/lib/pptx-client";
 import {
   ArrowLeft,
   ArrowRight,
@@ -779,9 +781,60 @@ const MAX_UPLOAD_MB = 50;
 // Images are exempt: they're compressed before upload and need Gemini's
 // vision anyway.
 const PDF_DIRECT_UPLOAD_BUDGET = 4 * 1024 * 1024;
+// Same budget applies to Word (.docx) and PowerPoint (.pptx) files — large
+// documents are extracted to text in the browser before upload.
+const DOC_DIRECT_UPLOAD_BUDGET = PDF_DIRECT_UPLOAD_BUDGET;
 // Absolute ceiling for sending raw file bytes; beyond this the request is
 // guaranteed to 413, so prefer a clear error message over a doomed upload.
 const DIRECT_UPLOAD_HARD_CAP = 4.4 * 1024 * 1024;
+
+// When a document's extracted text exceeds this many characters, it is split
+// into parts and uploaded in multiple sequential API calls. Each part stays
+// well under the server's 100k-char text limit and Vercel's 4.5 MB body cap.
+const TEXT_CHUNK_MAX_CHARS = 90_000;
+
+/**
+ * Split a long text into chunks at paragraph (or sentence) boundaries so each
+ * part fits in a single API request. Used for multi-part uploads of large
+ * documents that would otherwise exceed the serverless body limit.
+ */
+function splitTextIntoChunks(text: string, maxChars: number): string[] {
+  if (text.length <= maxChars) return [text];
+
+  const chunks: string[] = [];
+  const paragraphs = text.split(/\n\n+/);
+  let current = "";
+
+  for (const para of paragraphs) {
+    // Would adding this paragraph exceed the limit?
+    if (current.length + para.length + 2 > maxChars && current.length > 0) {
+      chunks.push(current.trim());
+      current = "";
+    }
+
+    // A single paragraph larger than maxChars needs sentence-level splitting.
+    if (para.length > maxChars) {
+      if (current) {
+        chunks.push(current.trim());
+        current = "";
+      }
+      const sentences = para.split(/(?<=[.!?])\s+/);
+      for (const sentence of sentences) {
+        if (current.length + sentence.length + 1 > maxChars && current.length > 0) {
+          chunks.push(current.trim());
+          current = "";
+        }
+        current += (current ? " " : "") + sentence;
+      }
+    } else {
+      current += (current ? "\n\n" : "") + para;
+    }
+  }
+
+  if (current.trim()) chunks.push(current.trim());
+
+  return chunks;
+}
 
 function formatSize(bytes: number): string {
   return bytes >= 1024 * 1024
@@ -922,7 +975,45 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
     setLoading(true);
 
     try {
-      const formData = new FormData();
+      type ScanResponse = {
+        error?: string;
+        cards?: Flashcard[];
+        title?: string;
+        summary?: string;
+        /** Model that produced the cards (the server may have failed over). */
+        model?: string;
+        /** Provider that produced the cards: "gemini" or "openrouter". */
+        provider?: string;
+        /** Set when the server had to switch models (rate limit / unavailable). */
+        notice?: string;
+      };
+
+      /** Send one FormData payload to /api/scan and parse the JSON response. */
+      const sendScanRequest = async (formData: FormData): Promise<ScanResponse> => {
+        const res = await fetch("/api/scan", { method: "POST", body: formData });
+
+        // The body may not be JSON (e.g. a host-level 413 page), so parse
+        // defensively instead of crashing with "not valid JSON".
+        const raw = await res.text();
+        let data: ScanResponse | null = null;
+        if (raw) {
+          try { data = JSON.parse(raw); } catch { data = null; }
+        }
+        if (!res.ok || !data || data.error) {
+          const sizeHint =
+            res.status === 413
+              ? " — that upload is too large for the server to accept. Remove a few files or use smaller ones."
+              : "";
+          throw new Error(
+            data?.error || `The upload failed (HTTP ${res.status}${sizeHint || ""}). Please try again.`
+          );
+        }
+        if (!data.cards) {
+          throw new Error("No flashcards were generated from this content");
+        }
+        return data;
+      };
+
       let sourceType = "text";
 
       if (mode === "file") {
@@ -946,15 +1037,21 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
           }
         }
 
-        // PDFs whose bytes no longer fit the direct-upload budget are parsed
-        // to text right here in the browser; the text is sent instead of the
-        // (multi-MB) file. Smaller PDFs still go as files so Gemini can see
-        // diagrams and layout.
+        // ── Phase 1: Extract text from large documents in the browser ──────
+        // PDFs, Word docs and PowerPoints whose bytes no longer fit the
+        // direct-upload budget (~4 MB) are parsed to text right here in the
+        // browser; only the extracted text is sent to the server. Smaller
+        // files still go as binary so Gemini can see diagrams and layout.
         let directBytes = 0;
         let truncatedText = false;
         const textChunks: string[] = [];
+        // Binary files (images, small PDFs/docs) collected for the first
+        // upload part — kept separate so multi-part uploads can attach them
+        // only to the first request.
+        const binaryFiles: File[] = [];
 
         for (const item of picked) {
+          // ── Large PDF: extract text in the browser ───────────────────────
           const pdfNeedsText =
             item.kind === "PDF" && directBytes + item.file.size > PDF_DIRECT_UPLOAD_BUDGET;
 
@@ -971,7 +1068,7 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
               // Old browser or a pdf.js hiccup — if the file still fits under
               // the hard cap, upload it directly like before.
               if (directBytes + item.file.size <= DIRECT_UPLOAD_HARD_CAP) {
-                formData.append("file", item.file);
+                binaryFiles.push(item.file);
                 directBytes += item.file.size;
                 continue;
               }
@@ -984,7 +1081,7 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
               // No text layer: it's a scan/photo PDF. Vision can still read
               // it if the bytes fit; otherwise it simply can't be uploaded.
               if (directBytes + item.file.size <= DIRECT_UPLOAD_HARD_CAP) {
-                formData.append("file", item.file);
+                binaryFiles.push(item.file);
                 directBytes += item.file.size;
                 continue;
               }
@@ -1003,20 +1100,156 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
             continue;
           }
 
+          // ── Large Word document: extract text in the browser ─────────────
+          const docxNeedsText =
+            item.kind === "Word" && directBytes + item.file.size > DOC_DIRECT_UPLOAD_BUDGET;
+
+          if (docxNeedsText) {
+            let text = "";
+            try {
+              setStatusText(`Reading "${item.file.name}" (${formatSize(item.file.size)})...`);
+              text = await extractDocxTextClient(item.file);
+            } catch (err) {
+              // Extraction failed — if the file still fits under the hard
+              // cap, let the server try (it has the same mammoth library).
+              if (directBytes + item.file.size <= DIRECT_UPLOAD_HARD_CAP) {
+                binaryFiles.push(item.file);
+                directBytes += item.file.size;
+                continue;
+              }
+              throw new Error(
+                err instanceof Error
+                  ? err.message
+                  : `Couldn't read "${item.file.name}" (${formatSize(item.file.size)}) in this browser. Try a smaller file.`
+              );
+            }
+
+            if (text.length > PDF_TEXT_CHAR_LIMIT) {
+              text = text.slice(0, PDF_TEXT_CHAR_LIMIT);
+              truncatedText = true;
+            }
+            textChunks.push(`--- Word document: ${item.file.name} ---\n${text}`);
+            continue;
+          }
+
+          // ── Large PowerPoint: extract text in the browser ────────────────
+          const pptxNeedsText =
+            item.kind === "PowerPoint" && directBytes + item.file.size > DOC_DIRECT_UPLOAD_BUDGET;
+
+          if (pptxNeedsText) {
+            let text = "";
+            try {
+              text = await extractPptxTextClient(item.file, (slide, total) => {
+                setStatusText(`Reading "${item.file.name}" — slide ${slide} of ${total}...`);
+              });
+            } catch (err) {
+              // Extraction failed — if the file still fits under the hard
+              // cap, let the server try (it has the same JSZip library).
+              if (directBytes + item.file.size <= DIRECT_UPLOAD_HARD_CAP) {
+                binaryFiles.push(item.file);
+                directBytes += item.file.size;
+                continue;
+              }
+              throw new Error(
+                err instanceof Error
+                  ? err.message
+                  : `Couldn't read "${item.file.name}" (${formatSize(item.file.size)}) in this browser. Try a smaller file.`
+              );
+            }
+
+            if (text.length > PDF_TEXT_CHAR_LIMIT) {
+              text = text.slice(0, PDF_TEXT_CHAR_LIMIT);
+              truncatedText = true;
+            }
+            textChunks.push(`--- PowerPoint presentation: ${item.file.name} ---\n${text}`);
+            continue;
+          }
+
+          // ── Small file or image: send as binary ─────────────────────────
           const optimized = await compressImage(item.file);
-          formData.append("file", optimized);
+          binaryFiles.push(optimized);
           directBytes += optimized.size;
         }
 
+        // ── Phase 2: Prepare upload parts ───────────────────────────────────
+        // Join all extracted text and split it into chunks that each fit
+        // within the server's text limit. When there are multiple chunks,
+        // the upload is sent in parts — binary files go with the first part,
+        // and each subsequent part carries only its text chunk.
+        let joinedText = "";
         if (textChunks.length > 0) {
-          let joined = textChunks.join("\n\n");
-          if (joined.length > PDF_TEXT_CHAR_LIMIT) {
-            joined = joined.slice(0, PDF_TEXT_CHAR_LIMIT);
+          joinedText = textChunks.join("\n\n");
+          if (joinedText.length > PDF_TEXT_CHAR_LIMIT) {
+            joinedText = joinedText.slice(0, PDF_TEXT_CHAR_LIMIT);
             truncatedText = true;
           }
-          formData.append("text", joined);
         }
-        setStatusText(truncatedText ? "Long PDF — using the first ~100k characters..." : "");
+
+        const uploadParts = joinedText
+          ? splitTextIntoChunks(joinedText, TEXT_CHUNK_MAX_CHARS)
+          : [];
+        const isMultiPart = uploadParts.length > 1;
+
+        if (isMultiPart) {
+          setStatusText(
+            `Large file detected! Uploading in ${uploadParts.length} parts (~4 MB each)...`
+          );
+        } else if (truncatedText) {
+          setStatusText("Long document — using the first ~100k characters...");
+        }
+
+        // ── Phase 3: Upload (single or multi-part) ──────────────────────────
+        const allResults: ScanResponse[] = [];
+
+        if (!isMultiPart) {
+          // ── Single upload (existing behavior) ────────────────────────────
+          const formData = new FormData();
+          binaryFiles.forEach((f) => formData.append("file", f));
+          if (joinedText) formData.append("text", joinedText);
+
+          const result = await sendScanRequest(formData);
+          allResults.push(result);
+        } else {
+          // ── Multi-part upload ────────────────────────────────────────────
+          // Part 1 includes binary files (images, small docs) alongside the
+          // first text chunk. Parts 2+ carry only their text chunk.
+          for (let i = 0; i < uploadParts.length; i++) {
+            setStatusText(
+              `Uploading part ${i + 1} of ${uploadParts.length}...`
+            );
+
+            const formData = new FormData();
+            if (i === 0) {
+              binaryFiles.forEach((f) => formData.append("file", f));
+            }
+            // Label each part so the AI knows it's reading a fragment of a
+            // larger document — this helps it generate relevant flashcards
+            // instead of treating each chunk as a standalone document.
+            const partLabel =
+              uploadParts.length > 1
+                ? `[Part ${i + 1} of ${uploadParts.length} — generate flashcards for this section of the document]\n\n`
+                : "";
+            formData.append("text", partLabel + uploadParts[i]);
+
+            const result = await sendScanRequest(formData);
+            allResults.push(result);
+
+            // Brief pause between parts to avoid hitting rate limits.
+            if (i < uploadParts.length - 1) {
+              await new Promise((r) => setTimeout(r, 500));
+            }
+          }
+        }
+
+        // ── Phase 4: Merge results ──────────────────────────────────────────
+        const mergedCards = allResults.flatMap((r) => r.cards || []);
+        const mergedTitle = allResults[0].title || "Study Set";
+        const mergedSummary = allResults[0].summary || "";
+        const mergedNotice = allResults.map((r) => r.notice).filter(Boolean).join("; ");
+
+        if (mergedCards.length === 0) {
+          throw new Error("No flashcards were generated from this content");
+        }
 
         const pdfs = picked.filter((item) => item.kind === "PDF").length;
         const words = picked.filter((item) => item.kind === "Word").length;
@@ -1034,55 +1267,37 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
             : images === picked.length
             ? "image"
             : "mixed";
+
+        if (isMultiPart) {
+          setStatusText("");
+          showToast(
+            `Generated ${mergedCards.length} flashcards from ${uploadParts.length} parts!`,
+            PartyPopper
+          );
+        }
+
+        onCardsReady(mergedCards, mergedTitle, mergedSummary, sourceType);
+        // If the AI had to switch models (its rate limit was hit, or the model
+        // isn't available) the server says so — that's worth showing instead of
+        // the plain success toast.
+        if (mergedNotice && !isMultiPart) {
+          showToast(mergedNotice, TriangleAlert);
+        } else if (!isMultiPart) {
+          showToast(`Generated ${mergedCards.length} flashcards!`, PartyPopper);
+        }
       } else {
         if (!textInput.trim()) { setError("Please enter some text to study"); setLoading(false); return; }
+        const formData = new FormData();
         formData.append("text", textInput.trim());
         sourceType = "text";
-      }
 
-      const res = await fetch("/api/scan", { method: "POST", body: formData });
-
-      // The body may not be JSON (e.g. a host-level 413 page), so parse
-      // defensively instead of crashing with "not valid JSON".
-      const raw = await res.text();
-      let data:
-        | {
-            error?: string;
-            cards?: Flashcard[];
-            title?: string;
-            summary?: string;
-            /** Model that produced the cards (the server may have failed over). */
-            model?: string;
-            /** Provider that produced the cards: "gemini" or "openrouter". */
-            provider?: string;
-            /** Set when the server had to switch models (rate limit / unavailable). */
-            notice?: string;
-          }
-        | null = null;
-      if (raw) {
-        try { data = JSON.parse(raw); } catch { data = null; }
-      }
-      if (!res.ok || !data || data.error) {
-        const sizeHint =
-          res.status === 413
-            ? " — that upload is too large for the server to accept. Remove a few files or use smaller ones."
-            : "";
-        throw new Error(
-          data?.error || `The upload failed (HTTP ${res.status}${sizeHint || ""}). Please try again.`
-        );
-      }
-      if (!data.cards) {
-        throw new Error("No flashcards were generated from this content");
-      }
-
-      onCardsReady(data.cards, data.title || "Study Set", data.summary || "", sourceType);
-      // If the AI had to switch models (its rate limit was hit, or the model
-      // isn't available) the server says so — that's worth showing instead of
-      // the plain success toast.
-      if (data.notice) {
-        showToast(data.notice, TriangleAlert);
-      } else {
-        showToast(`Generated ${data.cards.length} flashcards!`, PartyPopper);
+        const result = await sendScanRequest(formData);
+        onCardsReady(result.cards || [], result.title || "Study Set", result.summary || "", sourceType);
+        if (result.notice) {
+          showToast(result.notice, TriangleAlert);
+        } else {
+          showToast(`Generated ${(result.cards || []).length} flashcards!`, PartyPopper);
+        }
       }
     } catch (err) {
       setError((err as Error).message);
@@ -1104,7 +1319,7 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
         </span>
       </h2>
       <p style={{ color: "var(--text-muted)", margin: "0 0 20px", fontSize: 14 }}>
-        Upload PDFs, Word docs, PowerPoints or photos — large PDFs are read right in your browser — or paste text!
+        Upload PDFs, Word docs, PowerPoints or photos — large files are automatically split and uploaded in parts — or paste text!
       </p>
 
       {/* Mode toggle */}
@@ -1330,7 +1545,9 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
         {loading ? (
           <>
             <div className="spinner" style={{ width: 22, height: 22, borderWidth: 2.5, borderColor: "rgba(255,255,255,0.4)", borderTopColor: "white" }} />
-            {mode === "file" && picked.length > 1
+            {statusText
+              ? statusText
+              : mode === "file" && picked.length > 1
               ? `Reading ${picked.length} files...`
               : "Generating Flashcards..."}
           </>
@@ -1344,10 +1561,30 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
         )}
       </button>
 
-      {loading && (
+      {loading && !statusText && (
         <p style={{ textAlign: "center", fontSize: 13, color: "var(--text-muted)", marginTop: 12 }}>
           <Bot size={15} className="icon-inline" aria-hidden /> AI is reading your material... This may take a moment!
         </p>
+      )}
+      {loading && statusText && statusText.includes("part") && (
+        <div style={{
+          textAlign: "center",
+          marginTop: 12,
+          padding: "10px 16px",
+          background: "linear-gradient(135deg, #eff6ff, #eef2ff)",
+          border: "1.5px solid #bfdbfe",
+          borderRadius: 14,
+          fontSize: 13,
+          color: "#1d4ed8",
+          fontWeight: 600,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 8,
+        }}>
+          <Layers size={15} aria-hidden />
+          <span>{statusText}</span>
+        </div>
       )}
     </div>
   );
