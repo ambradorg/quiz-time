@@ -1031,6 +1031,112 @@ body {
 .remove-btn svg { width: 14px; height: 14px; }
 
 /* ── Login page ──────────────────────────────────────────────────────────── */
+/* ── Spaced repetition (Review tab) ─────────────────────────────────────────
+   Grade buttons carry the colour of their outcome (Again = rose, Hard =
+   amber, Good = emerald, Easy = blue) so the four choices are distinguishable
+   at a glance, matching the claymorphic "puffy" surface used elsewhere. */
+.review-grade {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 13px 10px;
+  border-radius: 18px;
+  border: 2.5px solid rgba(255, 255, 255, 0.85);
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+  box-shadow:
+    0 8px 16px rgba(43, 80, 180, 0.16),
+    inset 0 2px 3px rgba(255, 255, 255, 0.95),
+    inset 0 -5px 10px rgba(43, 80, 180, 0.12);
+}
+.review-grade:active {
+  transform: translateY(3px) scale(0.98);
+  box-shadow: inset 0 4px 10px rgba(43, 80, 180, 0.18);
+}
+.review-grade:focus-visible {
+  outline: 3px solid #1d4ed8;
+  outline-offset: 2px;
+}
+
+/* Deck filter: a horizontal scroller that never wraps or shows a scrollbar. */
+.review-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 2px 8px;
+  scrollbar-width: none;
+}
+.review-chips::-webkit-scrollbar { display: none; }
+.review-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-width: 210px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--clay-card-shadow-sm);
+  transition: all 0.16s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.review-chip.active {
+  background: linear-gradient(180deg, #5b9cff, #2f6bee);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.5);
+}
+.review-chip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #f43f5e;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 800;
+}
+.review-chip.active .review-chip-count { background: rgba(255, 255, 255, 0.28); }
+
+/* The deck mode switch grew to five tabs with P4: let it wrap on narrow
+   phones instead of overflowing its pill track. */
+.mode-switch { flex-wrap: wrap; }
+.mode-switch button { flex: 1 1 78px; padding: 7px 8px; gap: 5px; }
+
+/* Due badge on the bottom-nav Review item (and on the deck Review tab). */
+.nav-item { position: relative; }
+.nav-badge {
+  display: inline-block;
+  position: absolute;
+  top: 3px;
+  right: 50%;
+  transform: translateX(20px);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #f43f5e;
+  color: #ffffff;
+  font-size: 10.5px;
+  font-weight: 800;
+  line-height: 18px;
+  text-align: center;
+  box-shadow: 0 2px 6px rgba(159, 18, 57, 0.35);
+}
+
 .login-screen {
   min-height: 100vh;
   min-height: 100dvh;

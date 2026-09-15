@@ -13,6 +13,7 @@
     "test:failover": "tsx scripts/failover.test.mjs",
     "test:openrouter": "tsx scripts/openrouter.test.mjs",
     "test:scan": "tsx --experimental-test-module-mocks scripts/scan-fallback.test.mjs",
+    "test:srs": "tsx --test scripts/srs.test.mjs",
     "test:e2e": "tsx scripts/auth-e2e.mjs"
   },
   "dependencies": {

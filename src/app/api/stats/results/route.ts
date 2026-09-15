@@ -5,16 +5,18 @@ import { and, eq, inArray } from "drizzle-orm";
 import { requireUser } from "@/lib/auth-guard";
 
 const MAX_BATCH = 100;
-const VALID_MODES = ["study", "exam", "identify", "enumerate"];
+// "review" is written server-side by POST /api/review (spaced repetition),
+// but it is accepted here too so a queued client batch is never rejected.
+const VALID_MODES = ["study", "exam", "identify", "enumerate", "review"];
 
 /**
  * POST /api/stats/results — record card-level study outcomes.
  *
  * Every answered card (Study mode self-check, Exam mode multiple choice,
  * Identification typing and Enumeration listing) produces one row: which
- * deck, which card, right/wrong, when. This per-card signal is what P4's
- * spaced repetition will consume,
- * so it is stored durably server-side, scoped to the signed-in user.
+ * deck, which card, right/wrong, when. This per-card signal feeds the
+ * Stats tab *and* the spaced-repetition scheduler (src/lib/srs.ts), so it is
+ * stored durably server-side, scoped to the signed-in user.
  *
  * Body: { results: [{ sessionId, cardId, correct, mode?, answeredAt? }] }
  * Invalid entries are skipped and reported back — a card that doesn't

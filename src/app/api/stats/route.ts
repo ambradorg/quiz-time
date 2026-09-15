@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { studySessions, flashcards, studyResults } from "@/db/schema";
+import { studySessions, flashcards, studyResults, cardReviews } from "@/db/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { requireUser } from "@/lib/auth-guard";
 
@@ -44,7 +44,8 @@ export async function GET() {
         limit 1
       ), 0)::int as streak`;
 
-    const [overallRows, deckRows, recentRows, streakRes] = await Promise.all([
+    const [overallRows, deckRows, recentRows, streakRes, reviewRows, reviewDeckRows] =
+      await Promise.all([
       db
         .select({
           // ::int everywhere — pg returns bigint for count(*) as a string,
@@ -106,10 +107,38 @@ export async function GET() {
         .orderBy(desc(studyResults.answeredAt), desc(studyResults.id))
         .limit(RECENT_LIMIT),
 
-      // Standalone expression (no FROM) — always returns exactly one row,
-      // even for a brand-new user with zero results.
-      db.execute(streakQuery),
-    ]);
+        // Standalone expression (no FROM) — always returns exactly one row,
+        // even for a brand-new user with zero results.
+        db.execute(streakQuery),
+
+        // Spaced repetition (P4). Kept out of the deck query on purpose:
+        // joining study_results *and* card_reviews would multiply rows and
+        // inflate every count. One row per user, one row per deck.
+        db
+          .select({
+            tracked: sql<number>`count(*)::int`,
+            dueNow: sql<number>`count(*) filter (where ${cardReviews.dueAt} <= now())::int`,
+            learning: sql<number>`count(*) filter (where ${cardReviews.intervalDays} = 0)::int`,
+            mature: sql<number>`count(*) filter (where ${cardReviews.intervalDays} >= 21)::int`,
+            lapses: sql<number>`coalesce(sum(${cardReviews.lapses}), 0)::int`,
+            reviewedToday: sql<number>`count(*) filter (where ${cardReviews.lastReviewedAt} >= date_trunc('day', now()))::int`,
+            nextDueAt: sql<Date | null>`min(${cardReviews.dueAt}) filter (where ${cardReviews.dueAt} > now())`,
+          })
+          .from(cardReviews)
+          .where(eq(cardReviews.userId, userId)),
+
+        db
+          .select({
+            sessionId: cardReviews.sessionId,
+            tracked: sql<number>`count(*)::int`,
+            dueNow: sql<number>`count(*) filter (where ${cardReviews.dueAt} <= now())::int`,
+            mature: sql<number>`count(*) filter (where ${cardReviews.intervalDays} >= 21)::int`,
+            nextDueAt: sql<Date | null>`min(${cardReviews.dueAt}) filter (where ${cardReviews.dueAt} > now())`,
+          })
+          .from(cardReviews)
+          .where(eq(cardReviews.userId, userId))
+          .groupBy(cardReviews.sessionId),
+      ]);
 
     const totals = overallRows[0] ?? {
       totalAnswers: 0,
@@ -127,11 +156,36 @@ export async function GET() {
     const toIso = (value: Date | string | null): string | null =>
       value === null || value === undefined ? null : new Date(value).toISOString();
 
+    const reviewByDeck = new Map(reviewDeckRows.map((r) => [r.sessionId, r]));
+
     const decks = deckRows.map((d) => {
       const accuracy = d.answerCount > 0 ? Math.round((d.correctCount / d.answerCount) * 100) : null;
       const mastery = d.cardCount > 0 ? Math.round((d.studiedCount / d.cardCount) * 100) : 0;
-      return { ...d, accuracy, mastery, lastStudiedAt: toIso(d.lastStudiedAt) };
+      const review = reviewByDeck.get(d.sessionId);
+      const tracked = review?.tracked ?? 0;
+      return {
+        ...d,
+        accuracy,
+        mastery,
+        lastStudiedAt: toIso(d.lastStudiedAt),
+        // Spaced repetition rollup for this deck.
+        trackedCount: tracked,
+        dueCount: review?.dueNow ?? 0,
+        matureCount: review?.mature ?? 0,
+        newCount: Math.max(0, d.cardCount - tracked),
+        nextDueAt: toIso(review?.nextDueAt ?? null),
+      };
     });
+
+    const reviews = reviewRows[0] ?? {
+      tracked: 0,
+      dueNow: 0,
+      learning: 0,
+      mature: 0,
+      lapses: 0,
+      reviewedToday: 0,
+      nextDueAt: null as Date | null,
+    };
 
     return NextResponse.json({
       overall: {
@@ -146,6 +200,14 @@ export async function GET() {
             ? Math.round((totals.correctAnswers / totals.totalAnswers) * 100)
             : null,
         lastStudiedAt: toIso(totals.lastStudiedAt),
+        // Cards in the spaced-repetition rotation and how many are waiting.
+        reviewsTracked: reviews.tracked,
+        dueNow: reviews.dueNow,
+        learning: reviews.learning,
+        mature: reviews.mature,
+        lapses: reviews.lapses,
+        reviewedToday: reviews.reviewedToday,
+        nextDueAt: toIso(reviews.nextDueAt),
       },
       decks,
       recent: recentRows,

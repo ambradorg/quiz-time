@@ -16,6 +16,10 @@ QuizTime turns them into flashcards, then lets you review them four ways:
   answer is a list (the AI writes these as items separated by ` ; `, e.g.
   "Mango ; Banana ; Orange") become "name them all" questions with per-item
   feedback.
+- **Spaced Review** – the daily queue: QuizTime schedules every card with an
+  SM-2 descendant and shows you only what you're about to forget. Grade each
+  card Again / Hard / Good / Easy and it is rescheduled automatically — see
+  [Spaced repetition](#spaced-repetition-p4).
 
 ## Uploading
 
@@ -166,6 +170,141 @@ npm run db:generate   # writes a new SQL file into drizzle/
 npm run db:migrate    # applies it
 ```
 
+## Spaced Repetition (P4)
+
+Study Mode answers "do I know this?"; **Spaced Review** answers "what should I
+study *today*?". Every graded card gets a schedule, and the **Review** tab
+shows only the cards whose schedule has come up.
+
+### The four grades
+
+After a card flips you say how it felt, and the next review date is computed
+from that:
+
+| Grade | What it means | Effect |
+| --- | --- | --- |
+| **Again** | Blanked / wrong | Back in **10 minutes**, and a graduated card becomes a *lapse*: its interval resets and its ease factor drops by `0.20`. |
+| **Hard** | Remembered, with effort | Interval × `1.2` (at least a day); ease − `0.15`. |
+| **Good** | Remembered | Interval × ease factor — the normal path. |
+| **Easy** | Instant | Interval × ease × `1.3`, and ease + `0.15`. |
+
+The buttons print what each grade will do ("Good · 3 days") *before* you tap
+them, because the client and the server run the **same** scheduler.
+
+### The schedule (SM-2 descendant)
+
+`src/lib/srs.ts` is a pure, dependency-free implementation of an SM-2
+descendant — the four-button variant Anki uses. Learn it once and every screen
+in the app makes sense:
+
+- **New cards** start in a minutes-long *learning* phase: a first **Good**
+  parks them 10 minutes out, the next one graduates them to **1 day**. **Easy**
+  skips straight to **4 days**.
+- **Graduated cards** multiply their interval by their *ease factor* on Good
+  (`1 → 3 → 8 → 20 → 50 → 125` days at the default ease of 2.5), so a card you
+  keep nailing drifts months into the future.
+- **Again** on a graduated card is a **lapse**: interval resets, the card
+  relearns from 10 minutes, and the ease factor drops (floor `1.3`) so trouble
+  spots come back often.
+- Intervals are clamped to `[1 day, 365 days]`, the ease factor to
+  `[1.3, 2.8]`, and `now` is always injected — never read from the clock — so
+  the scheduler is deterministic and unit-tested.
+
+Cards you found hard inside a session come back **in the same session** (up to
+twice per card, so one card can't trap you in a loop).
+
+### Where it lives in the app
+
+- **Review tab** — today's queue for every deck, split into "due now" and
+  brand-new cards, with a per-deck filter (and a badge on the nav item).
+- **My Study Sets** — each deck shows `N due` and a one-tap button that jumps
+  straight into that deck's queue.
+- **A deck → Spaced Review** — the mode list has a spaced-repetition entry;
+  unsaved decks can't use it (their cards have no server-side ids yet).
+- **Home** — a banner when something is due; **Stats** adds "Due now" and "In
+  rotation" tiles plus per-deck due counts, and review answers show up in the
+  activity feed as *Spaced review*.
+- **New cards per day are capped** (`NEW_CARDS_PER_DAY = 20`) so a fresh
+  80-card deck doesn't bury you: the reviews you owe come first, then new cards
+  in deck order.
+- **Offline-friendly** — grades are queued locally and retried; if you leave
+  mid-session the pending grades are flushed with `navigator.sendBeacon`, the
+  same trick the study-outcome sync uses.
+
+### API
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/review?sessionId=&limit=` | `{ now, counts, nextDueAt, decks, queue }`. `counts` = `due`, `learning`, `tracked`, `newCards`, `newRemainingToday`, `newIntroducedToday`, `newPerDay`; `queue` holds the cards to review now (overdue first, then new cards, capped by `limit` 1–100). A `sessionId` that isn't yours returns an empty queue — never somebody else's cards. |
+| `POST /api/review` | `{ reviews: [{ cardId, sessionId, grade, reviewedAt? }] }` (max 100). The server recomputes the schedule with the same pure functions, upserts `card_reviews`, writes a `study_results` row with mode `review` and touches `card_progress`. Deck **and** card ownership are verified per entry; anything foreign is reported in `skipped[]` instead of being written. Responses carry each card's new interval, `dueAt`, `dueLabel` and full state. |
+
+`grade` must be `again`, `hard`, `good` or `easy` (anything else is skipped,
+never silently coerced), and a `reviewedAt` further than a day from the server
+clock is ignored in favour of "now".
+
+### `card_reviews`
+
+One row per `(user_id, card_id)` — the schedule itself: `ease`,
+`interval_days`, `reps`, `lapses`, `learning_step`, `review_count`,
+`last_grade`, `last_reviewed_at`, `due_at`. `study_results` records *what
+happened*; this table records *when the card comes back*. It is keyed by the
+user so a deck can never leak progress, and deleting a deck or an account
+cascades to its schedules.
+
+### Production migration (Supabase)
+
+Migration `drizzle/0004_spaced_repetition.sql` is idempotent. Paste this into
+the Supabase SQL editor and run it once:
+
+```sql
+CREATE TABLE IF NOT EXISTS "card_reviews" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "user_id" text NOT NULL,
+  "session_id" integer NOT NULL,
+  "card_id" integer NOT NULL,
+  "ease" real DEFAULT 2.5 NOT NULL,
+  "interval_days" integer DEFAULT 0 NOT NULL,
+  "reps" integer DEFAULT 0 NOT NULL,
+  "lapses" integer DEFAULT 0 NOT NULL,
+  "learning_step" integer DEFAULT 0 NOT NULL,
+  "review_count" integer DEFAULT 0 NOT NULL,
+  "last_grade" text,
+  "last_reviewed_at" timestamp,
+  "due_at" timestamp DEFAULT now() NOT NULL,
+  "created_at" timestamp DEFAULT now() NOT NULL
+);
+
+DO $$
+BEGIN
+    ALTER TABLE "card_reviews" ADD CONSTRAINT "card_reviews_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE cascade;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    ALTER TABLE "card_reviews" ADD CONSTRAINT "card_reviews_session_id_study_sessions_id_fk" FOREIGN KEY ("session_id") REFERENCES "public"."study_sessions"("id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    ALTER TABLE "card_reviews" ADD CONSTRAINT "card_reviews_card_id_flashcards_id_fk" FOREIGN KEY ("card_id") REFERENCES "public"."flashcards"("id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS "card_reviews_user_card_key" ON "card_reviews" USING btree ("user_id","card_id");
+CREATE INDEX IF NOT EXISTS "card_reviews_user_due_idx" ON "card_reviews" USING btree ("user_id","due_at");
+CREATE INDEX IF NOT EXISTS "card_reviews_user_session_idx" ON "card_reviews" USING btree ("user_id","session_id");
+CREATE INDEX IF NOT EXISTS "card_reviews_card_id_idx" ON "card_reviews" USING btree ("card_id");
+```
+
+It is safe to run twice, and safe on a database where the table already
+exists. The unique index is what makes `POST /api/review`'s upsert atomic.
+
+`scripts/seed-demo-stats.mjs` also seeds a mixed review queue (overdue,
+learning and upcoming cards) so the Review tab can be previewed without a real
+Google login.
+
 ## Accounts & Sign-in with Google
 
 Visitors see a **login page first** (large QuizTime logo + Continue with
@@ -227,10 +366,13 @@ The **Stats tab** (signed-in only) shows:
 | Route | Purpose |
 | --- | --- |
 | `POST /api/stats/results` | Record outcomes: `{ results: [{ sessionId, cardId, correct, mode?, answeredAt? }] }` (max 100/batch). Deck **and** card ownership are verified per entry — entries pointing at another user's data are skipped and reported in `invalid`, never written. |
-| `GET /api/stats` | `{ overall, decks, recent }` for the signed-in user only. All counts are cast `::int` (pg returns `bigint` strings for `count(*)`). |
+| `GET /api/stats` | `{ overall, decks, recent }` for the signed-in user only. All counts are cast `::int` (pg returns `bigint` strings for `count(*)`). `overall` also carries the spaced-repetition rollup (`reviewsTracked`, `dueNow`, `learning`, `mature`, `lapses`, `reviewedToday`, `nextDueAt`) and each deck gets `trackedCount`/`dueCount`/`matureCount`/`newCount`/`nextDueAt`. |
+| `GET /api/review` | The spaced-repetition queue (see below). |
+| `POST /api/review` | Grade cards and reschedule them (see below). |
 
-> The per-card right/wrong history in `study_results` is the foundation the
-> planned spaced-repetition scheduler (P4) will consume.
+> The per-card right/wrong history in `study_results` is what the
+> spaced-repetition scheduler (P4, below) consumes — a review is written there
+> too, with mode `review`, so it counts towards accuracy and the streak.
 
 ### Production migration (Supabase)
 
@@ -302,7 +444,11 @@ The sandbox/dev environment can't complete a real Google OAuth flow, so
 `scripts/auth-e2e.mjs` mints Auth.js session JWTs directly with
 `next-auth/jwt`'s `encode()` (salt `authjs.session-token`) and exercises the
 API over HTTP. It verifies, among other things, that **user A can neither
-read nor write user B's decks or study results**.
+read nor write user B's decks, study results or review schedules** — grading
+somebody else's card is skipped and never written (`skipped[]` in the
+response). It also walks the review schedule end to end: learning steps,
+graduation, lapses, deck badges, the `?sessionId` filter and the cascade when
+a deck is deleted.
 
 ```bash
 # 1. point DATABASE_URL/AUTH_SECRET at a test database (see .env.local)
@@ -323,6 +469,9 @@ npm run test:openrouter # the OpenRouter adapter (parts→content, error
 npm run test:scan       # the whole POST /api/scan handler, with the real
                         # @google/generative-ai SDK + OpenRouter adapter
                         # pointed at fake endpoints
+npm run test:srs        # the spaced-repetition scheduler (src/lib/srs.ts):
+                        # learning steps, graduations, lapses, ease clamping,
+                        # interval growth and the button previews
 ```
 
 `scripts/seed-demo-stats.mjs` seeds a demo user with decks + study history
