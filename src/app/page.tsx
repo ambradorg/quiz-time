@@ -12,9 +12,28 @@ import {
 import { extractDocxTextClient } from "@/lib/docx-client";
 import { extractPptxTextClient } from "@/lib/pptx-client";
 import {
+  GRADE_LABELS,
+  GRADE_SHORTCUTS,
+  MAX_REQUEUES_PER_CARD,
+  REVIEW_GRADES,
+  dueLabel,
+  overdueLabel,
+  previewIntervals,
+  scheduleCard,
+  type ReviewGrade,
+  type SrsState,
+} from "@/lib/srs";
+import {
   ArrowLeft,
   ArrowRight,
   BookBookmark,
+  Brain,
+  CalendarClock,
+  Hourglass,
+  Info,
+  Play,
+  RotateCcw,
+  Zap,
   BookOpen,
   BookOpenCheck,
   Bot,
@@ -91,10 +110,14 @@ interface StudySession {
   createdAt: string;
   cardCount: number;
   knownCount?: number;
+  /** Cards waiting in the spaced-repetition queue right now. */
+  dueCount?: number;
+  /** Cards with a review schedule at all. */
+  trackedCount?: number;
 }
 
-type Tab = "home" | "upload" | "quiz" | "sessions" | "stats";
-type QuizMode = "select" | "study" | "exam" | "identify" | "enumerate";
+type Tab = "home" | "upload" | "quiz" | "sessions" | "stats" | "review";
+type QuizMode = "select" | "study" | "exam" | "identify" | "enumerate" | "review";
 /** The three scored modes share one run state machine (questions, score, streak). */
 type ScoredMode = "exam" | "identify" | "enumerate";
 
@@ -1594,11 +1617,17 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
 function ModeSelect({
   cardCount,
   cards,
+  dueCount,
+  canReview,
   onSelect,
 }: {
   cardCount: number;
   cards: Flashcard[];
-  onSelect: (mode: "study" | "exam" | "identify" | "enumerate") => void;
+  /** Cards of this deck waiting in the spaced-repetition queue (null = still loading). */
+  dueCount: number | null;
+  /** Spaced repetition needs server-side card ids, so unsaved decks can't review. */
+  canReview: boolean;
+  onSelect: (mode: "study" | "exam" | "identify" | "enumerate" | "review") => void;
 }) {
   const enumerateCount = cards.filter(isEnumCard).length;
   const identifyCount = cardCount - enumerateCount;
@@ -1615,6 +1644,35 @@ function ModeSelect({
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {/* Spaced repetition (P4) */}
+        <button className="mode-card" onClick={() => onSelect("review")} disabled={!canReview}>
+          <div className="mode-icon" style={{ background: "linear-gradient(135deg, #7c3aed, #4f46e5)" }}>
+            <Brain />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 800 }}>
+              Spaced Review
+              {canReview && dueCount !== null && dueCount > 0 && (
+                <span className="badge" style={{ background: "#ffe4e6", color: "#9f1239", marginLeft: 8, verticalAlign: "middle" }}>
+                  {dueCount} due
+                </span>
+              )}
+            </p>
+            <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--text-muted)", lineHeight: 1.5 }}>
+              {!canReview
+                ? "Save this study set first \u2014 spaced repetition keeps its schedule on your account."
+                : dueCount === 0
+                  ? "Nothing due right now. Cards come back right before you'd forget them."
+                  : `Review the ${dueCount} card${dueCount === 1 ? "" : "s"} due today \u2014 grade each one and it is rescheduled automatically.`}
+            </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {["Due cards only", "Again/Hard/Good/Easy", "Reschedules itself"].map((t) => (
+                <span key={t} className="badge" style={{ background: "#f3e8ff", color: "#6d28d9" }}>{t}</span>
+              ))}
+            </div>
+          </div>
+        </button>
+
         {/* Study mode */}
         <button className="mode-card" onClick={() => onSelect("study")}>
           <div className="mode-icon" style={{ background: "linear-gradient(135deg, #3b82f6, #6366f1)" }}>
@@ -2429,6 +2487,710 @@ function ExamSummary({
   );
 }
 
+// ─── Spaced Repetition (P4) ───────────────────────────────────────────────────
+/**
+ * The Review tab is Anki's day-to-day loop: the server decides *which* cards
+ * are due (`GET /api/review`) and *when they come back* `POST /api/review` →
+ * `src/lib/srs.ts`), while this screen does the two things a learner actually
+ * feels — a card to recall, and four buttons that say how it went.
+ *
+ * The client imports the very same scheduler the server uses, so the
+ * intervals printed on the buttons ("Good · 3 days") are exactly what will be
+ * stored, and a card answered "Again" can be pushed back into the running
+ * queue without waiting for a round trip.
+ */
+
+/** One card from `GET /api/review`. */
+interface DueCard {
+  cardId: number;
+  sessionId: number;
+  question: string;
+  answer: string;
+  hint: string | null;
+  difficulty: string;
+  deckTitle: string;
+  isNew: boolean;
+  dueAt: string | null;
+  state: SrsState | null;
+}
+
+/** Per-deck rollup that powers the deck chips and the list badges. */
+interface ReviewDeckStat {
+  sessionId: number;
+  title: string;
+  cardCount: number;
+  trackedCount: number;
+  dueCount: number;
+  newCount: number;
+  nextDueAt: string | null;
+  nextDueLabel: string;
+}
+
+interface ReviewQueueData {
+  now: string;
+  counts: {
+    due: number;
+    learning: number;
+    tracked: number;
+    newCards: number;
+    newRemainingToday: number;
+    newIntroducedToday?: number;
+    newPerDay: number;
+  };
+  nextDueAt: string | null;
+  decks: ReviewDeckStat[];
+  queue: DueCard[];
+}
+
+/** One graded card in the current run (feeds the end-of-session summary). */
+interface GradedCard {
+  cardId: number;
+  grade: ReviewGrade;
+  intervalDays: number;
+  label: string;
+  dueAt: string;
+  deckTitle: string;
+}
+
+const GRADE_STYLE: Record<ReviewGrade, { color: string; bg: string; icon: LucideIcon }> = {
+  again: { color: "#be123c", bg: "linear-gradient(180deg, #fff1f2, #fecdd3)", icon: RotateCcw },
+  hard: { color: "#b45309", bg: "linear-gradient(180deg, #fffbeb, #fde68a)", icon: Dumbbell },
+  good: { color: "#047857", bg: "linear-gradient(180deg, #ecfdf5, #a7f3d0)", icon: Check },
+  easy: { color: "#1d4ed8", bg: "linear-gradient(180deg, #eff6ff, #bfdbfe)", icon: Zap },
+};
+
+/** "New" / "Due" / "Overdue by 2 days" chip for the card header. */
+function DueChip({ card }: { card: DueCard }) {
+  if (card.isNew) {
+    return (
+      <span className="badge" style={{ background: "#ede9fe", color: "#6d28d9" }}>
+        New
+      </span>
+    );
+  }
+  const late = overdueLabel(card.dueAt);
+  return (
+    <span
+      className="badge"
+      style={late ? { background: "#ffe4e6", color: "#9f1239" } : { background: "#dbeafe", color: "#1d4ed8" }}
+    >
+      {late ?? "Due"}
+    </span>
+  );
+}
+
+// ─── The review runner ────────────────────────────────────────────────────────
+function ReviewSession({
+  cards,
+  deckTitle,
+  onExit,
+  onFinished,
+}: {
+  cards: DueCard[];
+  deckTitle?: string;
+  onExit: () => void;
+  onFinished: () => void;
+}) {
+  const [queue, setQueue] = useState<DueCard[]>(cards);
+  const [index, setIndex] = useState(0);
+  const [flipped, setFlipped] = useState(false);
+  const [graded, setGraded] = useState<GradedCard[]>([]);
+  const [finished, setFinished] = useState(false);
+  const [syncState, setSyncState] = useState<"idle" | "saving" | "error">("idle");
+
+  // Cards answered "Again"/"Hard" are still in learning; they come back once
+  // or twice more before the session ends (bounded so a single card can't
+  // trap the learner in a loop).
+  const requeues = useRef<Record<number, number>>({});
+  // Grades waiting to be persisted — serialized so two flushes can't race.
+  const pending = useRef<{ cardId: number; sessionId: number; grade: ReviewGrade; reviewedAt: string }[]>([]);
+  const flushChain = useRef<Promise<boolean>>(Promise.resolve(true));
+
+  const doFlush = useCallback(async (beacon = false): Promise<boolean> => {
+    if (pending.current.length === 0) return true;
+    const batch = pending.current;
+    pending.current = [];
+    const body = JSON.stringify({ reviews: batch });
+
+    // Leaving the page mid-session: hand the batch to the browser so a grade
+    // isn't lost on navigation (same trick the study-outcome sync uses).
+    if (beacon && typeof navigator !== "undefined" && navigator.sendBeacon) {
+      const sent = navigator.sendBeacon("/api/review", new Blob([body], { type: "application/json" }));
+      if (!sent) pending.current = batch;
+      return sent;
+    }
+
+    setSyncState("saving");
+    try {
+      const res = await fetch("/api/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setSyncState("idle");
+      return true;
+    } catch {
+      // Offline: keep the grades queued and try again on the next answer.
+      pending.current = [...batch, ...pending.current];
+      setSyncState("error");
+      return false;
+    }
+  }, []);
+
+  const flush = useCallback(
+    (beacon = false) => {
+      const run = flushChain.current.then(() => doFlush(beacon)).catch(() => false);
+      flushChain.current = run;
+      return run;
+    },
+    [doFlush]
+  );
+
+  // Best-effort beacon flush if the user navigates away mid-session.
+  useEffect(() => () => void flush(true), [flush]);
+
+  const card = queue[index];
+
+  const handleGrade = useCallback(
+    (grade: ReviewGrade) => {
+      const current = queue[index];
+      if (!current) return;
+
+      const now = new Date();
+      const preview = previewIntervals(current.state, now)[grade];
+      const next = scheduleCard(current.state, grade, now);
+
+      setGraded((prev) => [
+        ...prev,
+        {
+          cardId: current.cardId,
+          grade,
+          intervalDays: next.intervalDays,
+          label: preview.label,
+          dueAt: next.dueAt.toISOString(),
+          deckTitle: current.deckTitle,
+        },
+      ]);
+
+      pending.current = [
+        ...pending.current,
+        { cardId: current.cardId, sessionId: current.sessionId, grade, reviewedAt: now.toISOString() },
+      ];
+      void flush();
+
+      const seen = requeues.current[current.cardId] ?? 0;
+      const requeue = next.intervalDays === 0 && seen < MAX_REQUEUES_PER_CARD;
+      if (requeue) {
+        requeues.current[current.cardId] = seen + 1;
+        setQueue((prev) => [
+          ...prev,
+          { ...current, state: next, isNew: false, dueAt: next.dueAt.toISOString() },
+        ]);
+      }
+
+      const nextLength = queue.length + (requeue ? 1 : 0);
+      if (index + 1 >= nextLength) {
+        setFinished(true);
+        void flush();
+        return;
+      }
+      setIndex((i) => i + 1);
+      setFlipped(false);
+    },
+    [queue, index, flush]
+  );
+
+  // Space/Enter reveals, 1-4 grade — the muscle memory of every flashcard app.
+  useEffect(() => {
+    if (finished) return;
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      if (event.key === " " || event.key === "Enter") {
+        event.preventDefault();
+        setFlipped(true);
+        return;
+      }
+      if (!flipped) return;
+      const match = REVIEW_GRADES.find((g) => GRADE_SHORTCUTS[g] === event.key);
+      if (match) {
+        event.preventDefault();
+        handleGrade(match);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [flipped, finished, handleGrade]);
+
+  const difficultyColor =
+    { easy: "#10b981", medium: "#f59e0b", hard: "#f43f5e" }[card?.difficulty ?? "medium"] ?? "#6366f1";
+
+  // ── Session summary ───────────────────────────────────────────────────────
+  if (finished) {
+    const counts = REVIEW_GRADES.map((g) => ({
+      grade: g,
+      label: GRADE_LABELS[g],
+      value: graded.filter((item) => item.grade === g).length,
+      ...GRADE_STYLE[g],
+    }));
+    const recalled = graded.filter((item) => item.grade !== "again").length;
+    const pct = graded.length > 0 ? Math.round((recalled / graded.length) * 100) : 0;
+    const nextDue = graded.reduce<string | null>(
+      (earliest, item) => (!earliest || item.dueAt < earliest ? item.dueAt : earliest),
+      null
+    );
+
+    return (
+      <div className="animate-fade-in" style={{ textAlign: "center", padding: "24px 4px" }}>
+        <div style={{ display: "flex", justifyContent: "center", color: "var(--accent-dark)" }}>
+          {pct >= 80 ? <Trophy size={68} strokeWidth={1.5} aria-hidden /> : <Dumbbell size={68} strokeWidth={1.5} aria-hidden />}
+        </div>
+        <h2 className="gradient-text" style={{ fontSize: 26, fontWeight: 800, margin: "8px 0 4px" }}>
+          Review complete!
+        </h2>
+        <p style={{ color: "var(--text-muted)", margin: "0 0 20px", fontSize: 15 }}>
+          {graded.length} card{graded.length === 1 ? "" : "s"} reviewed · {pct}% recalled first try
+        </p>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 18 }}>
+          {counts.map((c) => (
+            <div key={c.grade} style={{ background: c.bg, borderRadius: 16, padding: "12px 6px" }}>
+              <div style={{ fontSize: 22, fontWeight: 900, color: c.color }}>{c.value}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 700 }}>{c.label}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="glass-card" style={{ padding: "14px 16px", marginBottom: 18, textAlign: "left" }}>
+          <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 8 }}>
+            <Hourglass size={16} aria-hidden style={{ color: "#7c3aed", flexShrink: 0 }} />
+            <span>
+              Next card comes back <strong>{dueLabel(nextDue)}</strong>. Cards you found hard return sooner than
+              the ones you aced — that&apos;s the schedule doing its job.
+            </span>
+          </p>
+          {syncState === "error" && (
+            <p style={{ margin: "10px 0 0", fontSize: 12, color: "#9f1239", display: "flex", alignItems: "center", gap: 6 }}>
+              <CircleX size={14} aria-hidden />
+              Some grades couldn&apos;t be saved.
+              <button className="btn btn-ghost btn-sm" style={{ padding: "2px 8px" }} onClick={() => void flush()}>
+                Retry
+              </button>
+            </p>
+          )}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <button className="btn btn-primary btn-lg" style={{ width: "100%" }} onClick={onFinished}>
+            <CalendarClock />
+            Back to the review list
+          </button>
+          <button className="btn btn-ghost" style={{ width: "100%" }} onClick={onExit}>
+            <ArrowLeft />
+            Study this deck
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!card) return null;
+
+  const previews = previewIntervals(card.state, new Date());
+  const remaining = queue.length - index;
+
+  return (
+    <div className="animate-fade-in" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button className="btn btn-ghost btn-sm" onClick={onExit} style={{ padding: "6px 10px", borderRadius: 12 }} aria-label="Leave review">
+          <ArrowLeft />
+        </button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: 14, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {deckTitle ?? "Daily review"}
+          </p>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
+            {remaining} card{remaining === 1 ? "" : "s"} left in this round
+          </p>
+        </div>
+        <span className="score-pill" aria-label={`Card ${index + 1} of ${queue.length}`}>
+          <Layers />
+          {index + 1}/{queue.length}
+        </span>
+      </div>
+
+      <div className="progress-bar">
+        <div className="progress-fill" style={{ width: `${(index / queue.length) * 100}%` }} />
+      </div>
+
+      {/* The card itself — same flip mechanic as Study Mode. */}
+      <div
+        className="card-container"
+        style={{ height: 320, cursor: flipped ? "default" : "pointer" }}
+        onClick={!flipped ? () => setFlipped(true) : undefined}
+      >
+        <div className={`card-inner ${flipped ? "flipped" : ""}`}>
+          <div
+            className="card-front glass-card clay-flash-front"
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 26 }}
+          >
+            <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", justifyContent: "center" }}>
+              <DueChip card={card} />
+              <span className="badge" style={{ background: `${difficultyColor}20`, color: difficultyColor }}>
+                {card.difficulty}
+              </span>
+              {!deckTitle && (
+                <span className="badge" style={{ background: "#e0f2fe", color: "#0369a1", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {card.deckTitle}
+                </span>
+              )}
+            </div>
+            <div style={{ marginBottom: 10, color: "var(--accent-dark)" }}>
+              <CircleQuestionMark size={34} strokeWidth={1.5} aria-hidden />
+            </div>
+            <p style={{ textAlign: "center", fontSize: 18, fontWeight: 700, lineHeight: 1.4, margin: 0 }}>
+              {card.question}
+            </p>
+            {!flipped && (
+              <p style={{ marginTop: 18, fontSize: 13, color: "var(--text-muted)", fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                <Orbit size={14} aria-hidden />
+                Tap to reveal
+              </p>
+            )}
+          </div>
+
+          <div
+            className="card-back glass-card clay-flash-back"
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 26 }}
+          >
+            <div style={{ marginBottom: 10, color: "#f59e0b" }}>
+              <Lightbulb size={30} strokeWidth={1.5} aria-hidden />
+            </div>
+            <p style={{ textAlign: "center", fontSize: 16, fontWeight: 600, lineHeight: 1.5, margin: 0, overflowY: "auto", maxHeight: 200 }}>
+              {card.answer}
+            </p>
+            {card.hint && (
+              <p style={{ marginTop: 12, fontSize: 12, color: "var(--text-muted)", textAlign: "center" }}>
+                Hint: {card.hint}
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Grade buttons */}
+      {flipped ? (
+        <div className="animate-slide-up">
+          <p style={{ margin: "0 0 8px", fontSize: 12, color: "var(--text-muted)", fontWeight: 700, textAlign: "center" }}>
+            How well did you remember it?
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            {REVIEW_GRADES.map((g) => {
+              const style = GRADE_STYLE[g];
+              const Icon = style.icon;
+              return (
+                <button
+                  key={g}
+                  className="review-grade"
+                  style={{ background: style.bg, color: style.color }}
+                  onClick={() => handleGrade(g)}
+                >
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 15, fontWeight: 800 }}>
+                    <Icon size={17} aria-hidden />
+                    {GRADE_LABELS[g]}
+                  </span>
+                  <span style={{ fontSize: 11.5, fontWeight: 700, opacity: 0.75 }}>{previews[g].label}</span>
+                </button>
+              );
+            })}
+          </div>
+          <p style={{ margin: "10px 0 0", fontSize: 11.5, color: "var(--text-muted)", textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            <Keyboard size={13} aria-hidden />
+            Space reveals · 1 Again · 2 Hard · 3 Good · 4 Easy
+          </p>
+        </div>
+      ) : (
+        <button className="btn btn-primary btn-lg" style={{ width: "100%" }} onClick={() => setFlipped(true)}>
+          <Orbit />
+          Show answer
+        </button>
+      )}
+
+      {syncState === "saving" && (
+        <p style={{ margin: 0, fontSize: 11.5, color: "var(--text-muted)", textAlign: "center" }}>Saving…</p>
+      )}
+      {syncState === "error" && (
+        <p style={{ margin: 0, fontSize: 11.5, color: "#9f1239", textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+          <CircleX size={13} aria-hidden />
+          Offline — grades are queued
+          <button className="btn btn-ghost btn-sm" style={{ padding: "2px 8px" }} onClick={() => void flush()}>
+            Retry
+          </button>
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─── The Review tab ───────────────────────────────────────────────────────────
+function ReviewPage({
+  deckId,
+  onClearDeckFilter,
+  onOpenDeck,
+}: {
+  deckId: number | null;
+  onClearDeckFilter: () => void;
+  onOpenDeck: (id: number) => void;
+}) {
+  const [data, setData] = useState<ReviewQueueData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [running, setRunning] = useState(false);
+
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/review${deckId ? `?sessionId=${deckId}` : ""}${deckId ? "&" : "?"}limit=50`, signal ? { signal } : undefined);
+        const payload = await res.json();
+        if (signal?.aborted) return;
+        if (!res.ok) throw new Error(payload.error || "Failed to load the queue");
+        setData(payload as ReviewQueueData);
+      } catch {
+        if (signal?.aborted) return;
+        showToast("Failed to load your review queue", CircleX);
+      } finally {
+        if (!signal?.aborted) setLoading(false);
+      }
+    },
+    [deckId]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      await load(controller.signal);
+    })();
+    return () => controller.abort();
+  }, [load]);
+
+  const finishSession = () => {
+    setRunning(false);
+    void load();
+  };
+
+  if (running && data && data.queue.length > 0) {
+    return (
+      <ReviewSession
+        cards={data.queue}
+        deckTitle={deckId ? data.decks.find((d) => d.sessionId === deckId)?.title : undefined}
+        onExit={finishSession}
+        onFinished={finishSession}
+      />
+    );
+  }
+
+  if (loading && !data) {
+    return (
+      <div style={{ padding: "20px 16px" }}>
+        <h2 style={{ fontSize: 22, fontWeight: 800, margin: "0 0 16px", display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <Brain size={21} aria-hidden />
+          Daily Review
+        </h2>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="shimmer" style={{ height: i === 1 ? 130 : 72, borderRadius: 18 }} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div style={{ padding: "20px 16px", textAlign: "center" }}>
+        <h2 style={{ fontSize: 22, fontWeight: 800, margin: "0 0 16px", display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <Brain size={21} aria-hidden />
+          Daily Review
+        </h2>
+        <div style={{ marginBottom: 10, color: "var(--text-muted)" }}>
+          <Moon size={48} strokeWidth={1.5} aria-hidden />
+        </div>
+        <p style={{ color: "var(--text-muted)", fontSize: 14, margin: "0 0 16px" }}>
+          Couldn&apos;t load your review queue right now.
+        </p>
+        <button className="btn btn-secondary" onClick={() => void load()}>
+          <RefreshCw />
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  const { counts, decks, queue } = data;
+  const activeDeck = deckId ? decks.find((d) => d.sessionId === deckId) : undefined;
+  const startable = queue.length;
+
+  return (
+    <div className="animate-fade-in" style={{ padding: "20px 16px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <h2 style={{ fontSize: 22, fontWeight: 800, margin: 0, display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <Brain size={21} aria-hidden />
+          Daily Review
+        </h2>
+        <button className="btn btn-ghost btn-sm" onClick={() => void load()} style={{ padding: "6px 10px" }} aria-label="Refresh the review queue">
+          <RefreshCw />
+        </button>
+      </div>
+
+      {/* Today's workload */}
+      <div className="glass-card clay-streak" style={{ color: "white", padding: "18px 20px", display: "flex", alignItems: "center", gap: 16, marginBottom: 14 }}>
+        <div style={{ lineHeight: 1, flexShrink: 0 }}>
+          {counts.due > 0 ? <Brain size={42} strokeWidth={1.5} aria-hidden /> : <PartyPopper size={42} strokeWidth={1.5} aria-hidden />}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 26, fontWeight: 900, lineHeight: 1.1 }}>
+            {counts.due} card{counts.due === 1 ? "" : "s"} due
+          </div>
+          <div style={{ fontSize: 13, opacity: 0.92, fontWeight: 600 }}>
+            {counts.due === 0
+              ? `All caught up — next card ${dueLabel(data.nextDueAt)}`
+              : counts.learning > 0
+                ? `${counts.learning} still in learning · ${counts.tracked} in rotation`
+                : `${counts.tracked} card${counts.tracked === 1 ? "" : "s"} in rotation`}
+          </div>
+        </div>
+        <div style={{ textAlign: "right", fontSize: 12, opacity: 0.92, flexShrink: 0 }}>
+          <div style={{ fontWeight: 700 }}>New today</div>
+          <div>
+            {counts.newIntroducedToday ?? 0}/{counts.newPerDay}
+          </div>
+        </div>
+      </div>
+
+      {/* Deck filter */}
+      <div className="review-chips">
+        <button
+          className={`review-chip ${deckId === null ? "active" : ""}`}
+          onClick={onClearDeckFilter}
+        >
+          All decks
+        </button>
+        {decks.map((deck) => (
+          <button
+            key={deck.sessionId}
+            className={`review-chip ${deckId === deck.sessionId ? "active" : ""}`}
+            onClick={() => onOpenDeck(deck.sessionId)}
+            title={deck.dueCount > 0 ? `${deck.dueCount} due now` : `Next ${deck.nextDueLabel}`}
+          >
+            {deck.title}
+            {deck.dueCount > 0 && <span className="review-chip-count">{deck.dueCount}</span>}
+          </button>
+        ))}
+      </div>
+
+      {startable > 0 ? (
+        <button className="btn btn-primary btn-lg" style={{ width: "100%", margin: "16px 0 10px" }} onClick={() => setRunning(true)}>
+          <Play />
+          {activeDeck ? `Review ${activeDeck.title}` : "Start review"} · {startable} card{startable === 1 ? "" : "s"}
+        </button>
+      ) : (
+        <div className="glass-card" style={{ textAlign: "center", padding: "26px 20px", margin: "16px 0 10px" }}>
+          <div style={{ marginBottom: 8, color: "#7c3aed" }}>
+            <CircleCheckBig size={42} strokeWidth={1.5} aria-hidden />
+          </div>
+          <p style={{ margin: 0, fontWeight: 800, fontSize: 16 }}>Nothing due right now</p>
+          <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--text-muted)" }}>
+            {counts.tracked === 0
+              ? "Review a deck once and it enters the rotation — you'll see the cards again right before you'd forget them."
+              : `Your next card comes back ${dueLabel(data.nextDueAt)}. Come back then, or keep studying in the meantime.`}
+          </p>
+        </div>
+      )}
+
+      {/* Where the numbers come from */}
+      <div
+        style={{
+          background: "linear-gradient(135deg, #eff6ff, #ecfeff)",
+          border: "1.5px solid #bfdbfe",
+          borderRadius: 18,
+          padding: "16px 16px",
+          marginBottom: 16,
+        }}
+      >
+        <h3 style={{ margin: "0 0 10px", fontSize: 15, fontWeight: 800, display: "flex", alignItems: "center", gap: 7 }}>
+          <Info size={16} aria-hidden />
+          How spaced repetition works
+        </h3>
+        {[
+          "Answer a card, then say how it felt: Again, Hard, Good or Easy.",
+          "Good multiplies the wait by the card's ease factor — each success pushes the next review further out.",
+          "Again brings the card back in ten minutes and lowers its ease, so trouble spots return often.",
+          "Cards you nail end up months apart: you study right before forgetting, not every day.",
+        ].map((line, i) => (
+          <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6, fontSize: 13, color: "var(--text-muted)", lineHeight: 1.5 }}>
+            <Star size={14} aria-hidden style={{ flexShrink: 0, marginTop: 3, color: "#f59e0b" }} />
+            <span>{line}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Upcoming per deck */}
+      {decks.length > 0 && (
+        <>
+          <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 12px", display: "flex", alignItems: "center", gap: 7 }}>
+            <Layers size={17} aria-hidden />
+            Deck schedules
+          </h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {decks.map((deck) => {
+              const trackedPct = deck.cardCount > 0 ? Math.round((deck.trackedCount / deck.cardCount) * 100) : 0;
+              return (
+                <button
+                  key={deck.sessionId}
+                  className="glass-card"
+                  style={{ padding: "14px 16px", textAlign: "left", border: "none", cursor: "pointer", font: "inherit", background: "var(--card)", color: "var(--text)" }}
+                  onClick={() => onOpenDeck(deck.sessionId)}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ margin: 0, fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {deck.title}
+                      </p>
+                      <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
+                        {deck.trackedCount}/{deck.cardCount} cards in rotation
+                        {deck.newCount > 0 ? ` · ${deck.newCount} new` : ""}
+                      </p>
+                    </div>
+                    <span
+                      className="badge"
+                      style={
+                        deck.dueCount > 0
+                          ? { background: "#ffe4e6", color: "#9f1239", fontWeight: 800, flexShrink: 0 }
+                          : { background: "#d1fae5", color: "#047857", fontWeight: 800, flexShrink: 0 }
+                      }
+                    >
+                      {deck.dueCount > 0 ? `${deck.dueCount} due` : `Next ${deck.nextDueLabel}`}
+                    </span>
+                  </div>
+                  <div className="progress-bar">
+                    <div className="progress-fill" style={{ width: `${trackedPct}%` }} />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      <p style={{ textAlign: "center", fontSize: 12, color: "var(--text-muted)", marginTop: 18 }}>
+        Reviews are saved to your account — stop any time and pick the queue back up on another device.
+      </p>
+    </div>
+  );
+}
+
 // ─── Quiz Page ────────────────────────────────────────────────────────────────
 function QuizPage({
   sessionId,
@@ -2482,6 +3244,50 @@ function QuizPage({
         .catch(() => {});
     }
   }, [sessionId]);
+
+  // ── Spaced repetition (P4) ────────────────────────────────────────────────
+  // How many cards of this deck are due, surfaced on the mode card. One tiny
+  // request per opened deck (it only needs the counts, hence limit=1).
+  const [dueCount, setDueCount] = useState<number | null>(null);
+  const [reviewCards, setReviewCards] = useState<DueCard[] | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+
+  const refreshDueCount = useCallback(async () => {
+    if (!sessionId) {
+      setDueCount(null);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/review?sessionId=${sessionId}&limit=1`);
+      const data = await res.json();
+      if (res.ok) setDueCount(data.counts?.due ?? 0);
+    } catch {
+      /* offline — the mode card just won't show a count */
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
+    void (async () => {
+      await refreshDueCount();
+    })();
+  }, [refreshDueCount]);
+
+  /** Fetch this deck's due queue, then hand over to the review runner. */
+  const startReview = async () => {
+    if (!sessionId) return;
+    setReviewLoading(true);
+    try {
+      const res = await fetch(`/api/review?sessionId=${sessionId}&limit=50`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load the review queue");
+      setReviewCards(data.queue as DueCard[]);
+      setMode("review");
+    } catch {
+      showToast("Couldn't load your review queue", CircleX);
+    } finally {
+      setReviewLoading(false);
+    }
+  };
 
   const currentCard = activeCards[currentIndex];
   const currentProgress = currentCard?.id
@@ -2743,13 +3549,15 @@ function QuizPage({
   };
 
   // ── Mode switching ────────────────────────────────────────────────────────
-  const switchMode = (m: "study" | ScoredMode) => {
+  const switchMode = (m: "study" | ScoredMode | "review") => {
     if (m === "study") {
       // Respect the shuffle / unknown-only toggles if they're on.
       setActiveCards(buildStudyDeck(shuffleStudy, unknownOnly));
       setCurrentIndex(0);
       setDone(false);
       setMode("study");
+    } else if (m === "review") {
+      void startReview();
     } else {
       startScoredRun(m);
     }
@@ -2870,6 +3678,20 @@ function QuizPage({
               <ListOrdered />
               Enumerate
             </button>
+            <button
+              className={mode === "review" ? "active" : ""}
+              onClick={() => switchMode("review")}
+              disabled={!sessionId}
+              title={sessionId ? "Spaced repetition review" : "Save this set to use spaced review"}
+            >
+              <Brain />
+              Review
+              {dueCount !== null && dueCount > 0 && (
+                <span className="nav-badge" style={{ position: "static", transform: "none", marginLeft: 4 }}>
+                  {dueCount}
+                </span>
+              )}
+            </button>
           </div>
 
           {/* Study-mode toggles */}
@@ -2916,7 +3738,35 @@ function QuizPage({
 
       {/* Content */}
       {mode === "select" && (
-        <ModeSelect cardCount={cards.length} cards={cards} onSelect={switchMode} />
+        <ModeSelect
+          cardCount={cards.length}
+          cards={cards}
+          dueCount={dueCount}
+          canReview={Boolean(sessionId) && !reviewLoading}
+          onSelect={switchMode}
+        />
+      )}
+
+      {mode === "review" && reviewCards && reviewCards.length > 0 && (
+        <ReviewSession
+          cards={reviewCards}
+          deckTitle={title}
+          onExit={() => setMode("select")}
+          onFinished={() => {
+            setMode("select");
+            void refreshDueCount();
+          }}
+        />
+      )}
+
+      {mode === "review" && reviewCards && reviewCards.length === 0 && (
+        <EmptyRun
+          icon={CalendarClock}
+          color="#7c3aed"
+          title="Nothing due in this deck"
+          message="Every scheduled card is still resting. Cards you find hard come back sooner — come back later, or study the deck in another mode in the meantime."
+          onBackToModes={() => setMode("select")}
+        />
       )}
 
       {mode === "study" && !done && currentCard && (
@@ -3079,7 +3929,14 @@ function QuizPage({
 }
 
 // ─── Sessions Page ────────────────────────────────────────────────────────────
-function SessionsPage({ onOpen }: { onOpen: (id: number) => void }) {
+function SessionsPage({
+  onOpen,
+  onReviewDeck,
+}: {
+  onOpen: (id: number) => void;
+  /** Jump straight into the spaced-repetition queue for one deck. */
+  onReviewDeck: (id: number) => void;
+}) {
   const [sessions, setSessions] = useState<StudySession[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<number | null>(null);
@@ -3219,9 +4076,27 @@ function SessionsPage({ onOpen }: { onOpen: (id: number) => void }) {
                         : `${session.knownCount}/${session.cardCount} known`}
                     </span>
                   )}
+                  {typeof session.dueCount === "number" && session.dueCount > 0 && (
+                    <span className="badge" style={{ background: "#ffe4e6", color: "#9f1239" }}>
+                      {session.dueCount} due
+                    </span>
+                  )}
                 </p>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                {Boolean(session.dueCount) && (
+                  <button
+                    className="btn btn-primary btn-sm"
+                    style={{ padding: "6px 10px" }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onReviewDeck(session.id);
+                    }}
+                    aria-label={`Review ${session.dueCount} due cards in ${session.title}`}
+                  >
+                    <Brain />
+                  </button>
+                )}
                 <button
                   className="btn btn-ghost btn-sm"
                   style={{ padding: "6px", color: "#f43f5e", opacity: deleting === session.id ? 0.5 : 1 }}
@@ -3252,6 +4127,12 @@ interface DeckStat {
   lastStudiedAt: string | null;
   accuracy: number | null;
   mastery: number;
+  /** Spaced repetition (P4) rollup for this deck. */
+  trackedCount?: number;
+  dueCount?: number;
+  matureCount?: number;
+  newCount?: number;
+  nextDueAt?: string | null;
 }
 
 interface ActivityItem {
@@ -3275,6 +4156,14 @@ interface StatsData {
     streak: number;
     accuracy: number | null;
     lastStudiedAt: string | null;
+    /** Spaced repetition (P4). */
+    reviewsTracked?: number;
+    dueNow?: number;
+    learning?: number;
+    mature?: number;
+    lapses?: number;
+    reviewedToday?: number;
+    nextDueAt?: string | null;
   };
   decks: DeckStat[];
   recent: ActivityItem[];
@@ -3298,6 +4187,7 @@ function modeLabel(mode: string): string {
       exam: "Exam",
       identify: "Identification",
       enumerate: "Enumeration",
+      review: "Spaced review",
     }[mode] ?? "Study"
   );
 }
@@ -3409,6 +4299,20 @@ function StatsPage({ onOpenDeck }: { onOpenDeck: (id: number) => void }) {
       color: "#f59e0b",
       bg: "#fffbeb",
     },
+    {
+      label: "Due now (spaced review)",
+      value: overall.dueNow ?? 0,
+      icon: Brain,
+      color: "#7c3aed",
+      bg: "#f3e8ff",
+    },
+    {
+      label: `In rotation${overall.mature ? ` · ${overall.mature} mature` : ""}`,
+      value: overall.reviewsTracked ?? 0,
+      icon: Hourglass,
+      color: "#0891b2",
+      bg: "#ecfeff",
+    },
   ];
 
   return (
@@ -3510,8 +4414,15 @@ function StatsPage({ onOpenDeck }: { onOpenDeck: (id: number) => void }) {
                       Last studied {statsDateLabel(deck.lastStudiedAt)}
                     </p>
                   </div>
-                  <span className="badge" style={{ background: `${color}1a`, color, fontWeight: 800, flexShrink: 0 }}>
-                    {deck.mastery}% mastered
+                  <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
+                    <span className="badge" style={{ background: `${color}1a`, color, fontWeight: 800 }}>
+                      {deck.mastery}% mastered
+                    </span>
+                    {Boolean(deck.dueCount) && (
+                      <span className="badge" style={{ background: "#ffe4e6", color: "#9f1239" }}>
+                        {deck.dueCount} due
+                      </span>
+                    )}
                   </span>
                 </div>
                 <div className="progress-bar" style={{ marginBottom: 8 }}>
@@ -3587,7 +4498,7 @@ function StatsPage({ onOpenDeck }: { onOpenDeck: (id: number) => void }) {
           </div>
           <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>Nothing here yet</p>
           <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--text-muted)" }}>
-            Answer cards in Study, Exam, Identification or Enumeration mode and your activity will appear here.
+            Answer cards in Study, Exam, Identification, Enumeration or a spaced review and your activity will appear here.
           </p>
         </div>
       ) : (
@@ -3630,7 +4541,17 @@ function StatsPage({ onOpenDeck }: { onOpenDeck: (id: number) => void }) {
 }
 
 // ─── Home Page ────────────────────────────────────────────────────────────────
-function HomePage({ onUpload, onSessions }: { onUpload: () => void; onSessions: () => void }) {
+function HomePage({
+  onUpload,
+  onSessions,
+  onReview,
+  dueCount,
+}: {
+  onUpload: () => void;
+  onSessions: () => void;
+  onReview: () => void;
+  dueCount: number;
+}) {
   return (
     <div style={{ padding: "20px 16px" }}>
       {/* Hero */}
@@ -3666,7 +4587,7 @@ function HomePage({ onUpload, onSessions }: { onUpload: () => void; onSessions: 
           QuizTime
         </h1>
         <p style={{ margin: "0 0 20px", fontSize: 14, opacity: 0.9, lineHeight: 1.5 }}>
-          Upload your study material and I&apos;ll turn it into fun flashcards — then review them with Study, Exam, Identification or Enumeration mode!
+          Upload your study material and I&apos;ll turn it into fun flashcards — then review them with Study, Exam, Identification or Enumeration mode, and let spaced repetition tell you what to review today.
         </p>
         <button
           className="btn btn-white-clay"
@@ -3677,6 +4598,41 @@ function HomePage({ onUpload, onSessions }: { onUpload: () => void; onSessions: 
           Start Studying
         </button>
       </div>
+
+      {/* Spaced repetition nudge — only when there is actually work waiting. */}
+      {dueCount > 0 && (
+        <button
+          className="glass-card animate-fade-in"
+          onClick={onReview}
+          style={{
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "14px 16px",
+            marginBottom: 24,
+            border: "2px solid #ddd6fe",
+            background: "linear-gradient(135deg, #f5f3ff, #eef2ff)",
+            cursor: "pointer",
+            font: "inherit",
+            color: "var(--text)",
+            textAlign: "left",
+          }}
+        >
+          <span style={{ color: "#6d28d9", display: "flex", flexShrink: 0 }}>
+            <Brain size={26} aria-hidden />
+          </span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "block", fontSize: 14, fontWeight: 800 }}>
+              {dueCount} card{dueCount === 1 ? "" : "s"} due for review
+            </span>
+            <span style={{ display: "block", fontSize: 12, color: "var(--text-muted)" }}>
+              Spaced repetition picked the cards you&apos;re about to forget
+            </span>
+          </span>
+          <ArrowRight size={18} aria-hidden />
+        </button>
+      )}
 
       {/* Features */}
       <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 14px", display: "flex", alignItems: "center", gap: 7 }}>
@@ -3691,6 +4647,7 @@ function HomePage({ onUpload, onSessions }: { onUpload: () => void; onSessions: 
           { icon: ClipboardCheck, title: "Exam Mode", desc: "4 choices, instant score" },
           { icon: Type, title: "Identification", desc: "Type the answer from memory" },
           { icon: ListOrdered, title: "Enumeration", desc: "List every item from memory" },
+          { icon: Brain, title: "Spaced Review", desc: "Due cards only — scheduled by SM-2" },
         ].map((f, i) => (
           <div
             key={i}
@@ -4007,10 +4964,34 @@ export default function App() {
   const [hasApiKey, setHasApiKey] = useState(true);
   const [deckKey, setDeckKey] = useState(0);
 
+  // Spaced repetition (P4): which deck the Review tab is filtered to, and how
+  // many cards are due right now (the number on the nav badge).
+  const [reviewDeckId, setReviewDeckId] = useState<number | null>(null);
+  const [dueCount, setDueCount] = useState(0);
+
   // Sign-in state (Auth.js). `data` is null while unauthenticated.
   const { data: session, status } = useSession();
   const user = session?.user;
   const signedIn = Boolean(user?.id);
+
+  // Keep the "due today" badge honest: refetch on mount, on every sign-in and
+  // whenever the user lands on another tab (it is a single lightweight query).
+  const refreshDueCount = useCallback(async () => {
+    try {
+      const res = await fetch("/api/review?limit=1");
+      const data = await res.json();
+      if (res.ok) setDueCount(data.counts?.due ?? 0);
+    } catch {
+      /* offline — keep the last known count */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!signedIn) return;
+    void (async () => {
+      await refreshDueCount();
+    })();
+  }, [refreshDueCount, signedIn, tab]);
 
   // Check if the AI key is configured via the lightweight /api/config
   // endpoint. (The old probe — an empty POST to /api/scan — always got
@@ -4127,7 +5108,16 @@ export default function App() {
       );
     }
 
-    if (tab === "home") return <HomePage onUpload={() => setTab("upload")} onSessions={() => setTab("sessions")} />;
+    if (tab === "home") {
+      return (
+        <HomePage
+          onUpload={() => setTab("upload")}
+          onSessions={() => setTab("sessions")}
+          onReview={() => setTab("review")}
+          dueCount={dueCount}
+        />
+      );
+    }
     if (tab === "upload") {
       if (!signedIn) return <SignInPrompt feature="create study sets" />;
       if (!hasApiKey) return <SetupPage />;
@@ -4177,11 +5167,29 @@ export default function App() {
     }
     if (tab === "sessions") {
       if (!signedIn) return <SignInPrompt feature="see your study sets" />;
-      return <SessionsPage onOpen={handleOpenSession} />;
+      return (
+        <SessionsPage
+          onOpen={handleOpenSession}
+          onReviewDeck={(id) => {
+            setReviewDeckId(id);
+            setTab("review");
+          }}
+        />
+      );
     }
     if (tab === "stats") {
       if (!signedIn) return <SignInPrompt feature="see your study stats" />;
       return <StatsPage onOpenDeck={handleOpenSession} />;
+    }
+    if (tab === "review") {
+      if (!signedIn) return <SignInPrompt feature="review your cards" />;
+      return (
+        <ReviewPage
+          deckId={reviewDeckId}
+          onClearDeckFilter={() => setReviewDeckId(null)}
+          onOpenDeck={(id) => setReviewDeckId((current) => (current === id ? null : id))}
+        />
+      );
     }
     return null;
   };
@@ -4190,6 +5198,7 @@ export default function App() {
     { id: "home" as Tab, label: "Home", Icon: House },
     { id: "upload" as Tab, label: "Upload", Icon: Upload },
     { id: "sessions" as Tab, label: "My Sets", Icon: Library },
+    { id: "review" as Tab, label: "Review", Icon: Brain, badge: dueCount },
     { id: "stats" as Tab, label: "Stats", Icon: ChartColumn },
   ];
 
@@ -4278,7 +5287,7 @@ export default function App() {
 
       {/* Bottom nav */}
       <nav className="nav-bottom">
-        {navItems.map(({ id, label, Icon }) => (
+        {navItems.map(({ id, label, Icon, badge }) => (
           <button
             key={id}
             className={`nav-item ${tab === id ? "active" : ""}`}
@@ -4286,10 +5295,13 @@ export default function App() {
               setTab(id);
               setPendingCards(null);
               setActiveSessionCards(null);
+              if (id !== "review") setReviewDeckId(null);
             }}
+            aria-label={badge ? `${label} — ${badge} card${badge === 1 ? "" : "s"} due` : label}
           >
             <Icon />
             {label}
+            {typeof badge === "number" && badge > 0 && <span className="nav-badge">{badge}</span>}
           </button>
         ))}
       </nav>

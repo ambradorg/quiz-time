@@ -5,6 +5,7 @@ import {
   timestamp,
   integer,
   boolean,
+  real,
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
@@ -82,6 +83,59 @@ export const cardProgress = pgTable(
   ]
 );
 
+/**
+ * Spaced-repetition scheduling state (P4) — one row per (user, card).
+ *
+ * `study_results` records *what happened*; this table records *when the card
+ * should come back*. It is the persistence layer of `src/lib/srs.ts`, which
+ * is the only thing allowed to compute the numbers below, so the algorithm
+ * lives in exactly one place (and is unit-tested in scripts/srs.test.mjs).
+ *
+ * Keyed by (user_id, card_id): a card belongs to one deck, but keeping the
+ * user in the key means a deck shared with somebody else could never leak
+ * progress, and lets the "due now" queue be one indexed lookup per user.
+ */
+export const cardReviews = pgTable(
+  "card_reviews",
+  {
+    id: serial("id").primaryKey(),
+    /** Owner of the schedule — every read/write is scoped to this column. */
+    userId: text("user_id").notNull().references(() => users.id, {
+      onDelete: "cascade",
+      onUpdate: "cascade",
+    }),
+    /** Deck the card belongs to (denormalized so deck filters stay cheap). */
+    sessionId: integer("session_id").notNull().references(() => studySessions.id, { onDelete: "cascade" }),
+    cardId: integer("card_id").notNull().references(() => flashcards.id, { onDelete: "cascade" }),
+    /** SM-2 ease factor — clamped to [1.3, 2.8] by the scheduler. */
+    ease: real("ease").notNull().default(2.5),
+    /** Days until the next review; 0 = still on a sub-day learning step. */
+    intervalDays: integer("interval_days").notNull().default(0),
+    /** Consecutive successful reviews; resets to 0 on a lapse. */
+    reps: integer("reps").notNull().default(0),
+    /** Times the card was forgotten after graduating to review. */
+    lapses: integer("lapses").notNull().default(0),
+    /** Position in the learning/relearning steps while intervalDays = 0. */
+    learningStep: integer("learning_step").notNull().default(0),
+    /** Total grades applied to the card. */
+    reviewCount: integer("review_count").notNull().default(0),
+    /** Most recent grade: 'again' | 'hard' | 'good' | 'easy'. */
+    lastGrade: text("last_grade"),
+    lastReviewedAt: timestamp("last_reviewed_at"),
+    /** When the card next becomes due. The review queue filters on this. */
+    dueAt: timestamp("due_at").defaultNow().notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    // One schedule per (user, card) — makes the upsert atomic.
+    uniqueIndex("card_reviews_user_card_key").on(table.userId, table.cardId),
+    // "what's due for this user now" — the hot path of GET /api/review.
+    index("card_reviews_user_due_idx").on(table.userId, table.dueAt),
+    index("card_reviews_user_session_idx").on(table.userId, table.sessionId),
+    index("card_reviews_card_id_idx").on(table.cardId),
+  ]
+);
+
 export const studyResults = pgTable(
   "study_results",
   {
@@ -97,7 +151,7 @@ export const studyResults = pgTable(
     cardId: integer("card_id").notNull().references(() => flashcards.id, { onDelete: "cascade" }),
     /** Right/wrong signal — the foundation P4's spaced repetition consumes. */
     correct: boolean("correct").notNull(),
-    /** Which mode produced the outcome: 'study' (self-check), 'exam' (MCQ), 'identify' (typed answer) or 'enumerate' (listed items). */
+    /** Which mode produced the outcome: 'study' (self-check), 'exam' (MCQ), 'identify' (typed answer), 'enumerate' (listed items) or 'review' (spaced repetition). */
     mode: text("mode").notNull().default("study"),
     answeredAt: timestamp("answered_at").defaultNow().notNull(),
   },
@@ -115,3 +169,4 @@ export type StudySession = typeof studySessions.$inferSelect;
 export type Flashcard = typeof flashcards.$inferSelect;
 export type CardProgress = typeof cardProgress.$inferSelect;
 export type StudyResult = typeof studyResults.$inferSelect;
+export type CardReview = typeof cardReviews.$inferSelect;

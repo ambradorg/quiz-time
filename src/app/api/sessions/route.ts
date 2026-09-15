@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { studySessions, flashcards, cardProgress } from "@/db/schema";
+import { studySessions, flashcards, cardProgress, cardReviews } from "@/db/schema";
 import { desc, eq, and, sql } from "drizzle-orm";
 import { requireUser } from "@/lib/auth-guard";
 
@@ -11,8 +11,9 @@ export async function GET() {
 
     // One query instead of one per session: card counts come from the
     // left joins, "known" counts from joining only known progress rows
-    // (safe because card_progress has a unique (card_id, session_id) key).
-    // Scoped to the signed-in user's decks.
+    // (safe because card_progress has a unique (card_id, session_id) key),
+    // and "due now" from the spaced-repetition schedule
+    // (card_reviews.user_due_idx). Scoped to the signed-in user's decks.
     const sessions = await db
       .select({
         id: studySessions.id,
@@ -25,6 +26,10 @@ export async function GET() {
         // comparisons client-side ("9" >= "10" is true as strings).
         cardCount: sql<number>`count(${flashcards.id})::int`,
         knownCount: sql<number>`count(${cardProgress.id})::int`,
+        // Spaced repetition: how many cards of this deck are waiting today,
+        // so the deck list can badge them without a second request.
+        dueCount: sql<number>`count(${cardReviews.id}) filter (where ${cardReviews.dueAt} <= now())::int`,
+        trackedCount: sql<number>`count(${cardReviews.id})::int`,
       })
       .from(studySessions)
       .where(eq(studySessions.userId, guard.user.id))
@@ -35,6 +40,14 @@ export async function GET() {
           eq(cardProgress.sessionId, studySessions.id),
           eq(cardProgress.cardId, flashcards.id),
           eq(cardProgress.isKnown, true)
+        )
+      )
+      .leftJoin(
+        cardReviews,
+        and(
+          eq(cardReviews.sessionId, studySessions.id),
+          eq(cardReviews.cardId, flashcards.id),
+          eq(cardReviews.userId, guard.user.id)
         )
       )
       .groupBy(studySessions.id)

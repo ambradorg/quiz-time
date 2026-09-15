@@ -577,3 +577,275 @@ describe("account re-keying (same email, new Google sub)", () => {
     );
   });
 });
+
+// ─── Spaced repetition (P4) ──────────────────────────────────────────────────
+/**
+ * `/api/review` is the only place where the app *writes* scheduling state, so
+ * these are the promises worth locking down:
+ *   - the queue is the learner's own cards (never another user's),
+ *   - grades walk the SM-2 schedule exactly as src/lib/srs.ts documents,
+ *   - a review is also a study result (stats/streak stay consistent),
+ *   - overdue cards surface in the queue and on the deck badges,
+ *   - the schedule is a card_reviews row, and it dies with the deck.
+ *
+ * The fixture is created here rather than reusing the earlier decks: other
+ * suites create and delete their own, and exact numbers are the point.
+ */
+describe("spaced repetition (/api/review)", () => {
+  let deck; // a deck owned by user A
+  let cards; // its three cards
+
+  before(async () => {
+    const { rows } = await pool.query(
+      `INSERT INTO study_sessions (title, source_type, user_id)
+       VALUES ('E2E Review Deck', 'text', $1) RETURNING id`,
+      [USER_A]
+    );
+    deck = rows[0].id;
+    cards = [];
+    for (let i = 1; i <= 3; i++) {
+      const res = await pool.query(
+        `INSERT INTO flashcards (session_id, question, answer, difficulty, order_index)
+         VALUES ($1, $2, $3, 'medium', $4) RETURNING id`,
+        [deck, `Review question ${i}?`, `Review answer ${i}`, i - 1]
+      );
+      cards.push(res.rows[0].id);
+    }
+  });
+
+  const grade = (cookie, reviews) =>
+    api("/api/review", { method: "POST", cookie, body: { reviews } });
+
+  test("anonymous requests are rejected", async () => {
+    const list = await api("/api/review");
+    assert.equal(list.status, 401);
+    const write = await api("/api/review", {
+      method: "POST",
+      body: { reviews: [{ cardId: 1, sessionId: 1, grade: "good" }] },
+    });
+    assert.equal(write.status, 401);
+  });
+
+  test("the queue is scoped to the user and starts with brand-new cards", async () => {
+    const mine = await api("/api/review", { cookie: tokenA });
+    assert.equal(mine.status, 200);
+    assert.equal(mine.data.counts.due, 0, "nothing has been reviewed yet");
+    assert.equal(mine.data.counts.tracked, 0);
+
+    const queued = mine.data.queue.map((c) => c.cardId);
+    for (const id of cards) assert.ok(queued.includes(id), `card ${id} is queued`);
+    const first = mine.data.queue.find((c) => c.cardId === cards[0]);
+    assert.equal(first.isNew, true);
+    assert.equal(first.state, null, "no schedule yet");
+    assert.equal(first.deckTitle, "E2E Review Deck");
+    assert.equal(mine.data.counts.newIntroducedToday, 0, "no card has been introduced yet");
+
+    // B's queue never contains A's cards.
+    const theirs = await api("/api/review", { cookie: tokenB });
+    const ids = theirs.data.queue.map((c) => c.cardId);
+    assert.ok(!ids.some((id) => cards.includes(id)), "B must not see A's cards");
+    assert.ok(ids.includes(cardsB1[0]));
+  });
+
+  test("grading walks the learning steps and then graduates the card", async () => {
+    // 1st Good → the 10-minute learning step (never scheduled as "days").
+    const first = await grade(tokenA, [{ cardId: cards[0], sessionId: deck, grade: "good" }]);
+    assert.equal(first.status, 200);
+    assert.equal(first.data.recorded, 1);
+    assert.deepEqual(first.data.skipped, []);
+    assert.equal(first.data.results[0].intervalDays, 0);
+    assert.equal(first.data.results[0].dueLabel, "in 10 min");
+    assert.equal(first.data.results[0].state.ease, 2.5);
+
+    const row = await pool.query(
+      `SELECT ease, interval_days, reps, lapses, review_count, last_grade, due_at
+         FROM card_reviews WHERE user_id = $1 AND card_id = $2`,
+      [USER_A, cards[0]]
+    );
+    assert.equal(row.rows.length, 1, "the schedule is persisted");
+    assert.equal(row.rows[0].interval_days, 0);
+    assert.equal(row.rows[0].reps, 0);
+    assert.equal(row.rows[0].review_count, 1);
+    assert.equal(row.rows[0].last_grade, "good");
+
+    // The card now waits in the future, so it leaves the queue…
+    const queued = await api("/api/review", { cookie: tokenA });
+    assert.ok(!queued.data.queue.some((c) => c.cardId === cards[0]), "not due for 10 minutes");
+    assert.equal(queued.data.counts.tracked, 1);
+
+    // …but an overdue card is in the queue, and counted as due.
+    await pool.query(
+      `UPDATE card_reviews SET due_at = now() - interval '2 days' WHERE user_id = $1 AND card_id = $2`,
+      [USER_A, cards[0]]
+    );
+    const due = await api("/api/review", { cookie: tokenA });
+    const overdue = due.data.queue.find((c) => c.cardId === cards[0]);
+    assert.ok(overdue, "an overdue card is queued");
+    assert.equal(overdue.isNew, false);
+    assert.equal(due.data.counts.due, 1);
+    assert.equal(overdue.state.reviewCount, 1);
+
+    // 2nd Good → graduates to a 1-day interval at the default ease.
+    const second = await grade(tokenA, [{ cardId: cards[0], sessionId: deck, grade: "good" }]);
+    assert.equal(second.data.results[0].intervalDays, 1);
+    assert.equal(second.data.results[0].dueLabel, "tomorrow");
+    assert.equal(second.data.results[0].state.reps, 1);
+
+    // 3rd Good → 1 day × ease.
+    const third = await grade(tokenA, [{ cardId: cards[0], sessionId: deck, grade: "good" }]);
+    assert.equal(third.data.results[0].intervalDays, Math.round(1 * 2.5));
+    assert.equal(third.data.results[0].dueLabel, "in 3 days");
+  });
+
+  test("Again on a graduated card is a lapse: relearn soon, with a lower ease", async () => {
+    const lapsed = await grade(tokenA, [{ cardId: cards[0], sessionId: deck, grade: "again" }]);
+    assert.equal(lapsed.data.recorded, 1);
+    assert.equal(lapsed.data.results[0].intervalDays, 0);
+    assert.equal(lapsed.data.results[0].dueLabel, "in 10 min");
+    assert.equal(lapsed.data.results[0].state.lapses, 1);
+    assert.equal(lapsed.data.results[0].state.reps, 0);
+    assert.equal(lapsed.data.results[0].state.ease, 2.3, "ease drops by 0.2 (floor 1.3)");
+
+    // Graduating again keeps the harder ease: 1 day × 2.3 = 2 days.
+    const regraduated = await grade(tokenA, [{ cardId: cards[0], sessionId: deck, grade: "good" }]);
+    assert.equal(regraduated.data.results[0].intervalDays, 1);
+    const grown = await grade(tokenA, [{ cardId: cards[0], sessionId: deck, grade: "good" }]);
+    assert.equal(grown.data.results[0].intervalDays, Math.round(1 * 2.3));
+    assert.equal(grown.data.results[0].dueLabel, "in 2 days");
+  });
+
+  test("Easy skips the learning steps and Hard grows slowly", async () => {
+    const easy = await grade(tokenA, [{ cardId: cards[1], sessionId: deck, grade: "easy" }]);
+    assert.equal(easy.data.results[0].intervalDays, 4, "Easy graduates a new card to 4 days");
+    assert.ok(easy.data.results[0].state.ease > 2.5);
+
+    const hard = await grade(tokenA, [{ cardId: cards[1], sessionId: deck, grade: "hard" }]);
+    assert.equal(hard.data.results[0].intervalDays, Math.max(1, Math.round(4 * 1.2)));
+    assert.ok(hard.data.results[0].state.ease < easy.data.results[0].state.ease);
+  });
+
+  test("A cannot grade B's cards, and mixed batches report the skips", async () => {
+    const attack = await grade(tokenA, [{ cardId: cardsB1[0], sessionId: deckB1, grade: "good" }]);
+    assert.equal(attack.status, 200);
+    assert.equal(attack.data.recorded, 0);
+    assert.equal(attack.data.skipped.length, 1);
+    assert.match(attack.data.skipped[0].reason, /Session not found/);
+
+    // A foreign card must not have been scheduled for anybody.
+    const rows = await pool.query(`SELECT count(*)::int AS n FROM card_reviews WHERE card_id = $1`, [
+      cardsB1[0],
+    ]);
+    assert.equal(rows.rows[0].n, 0, "a foreign card is never written");
+
+    // A card id that isn't in the claimed deck is rejected too.
+    const mismatched = await grade(tokenA, [
+      { cardId: cardsB1[0], sessionId: deck, grade: "good" },
+    ]);
+    assert.equal(mismatched.data.recorded, 0);
+    assert.match(mismatched.data.skipped[0].reason, /Card not found in this session/);
+
+    // Mixed batch: A's entry is recorded, B's is skipped.
+    const mixed = await grade(tokenA, [
+      { cardId: cards[2], sessionId: deck, grade: "good" },
+      { cardId: cardsB1[0], sessionId: deckB1, grade: "good" },
+    ]);
+    assert.equal(mixed.data.recorded, 1);
+    assert.equal(mixed.data.skipped.length, 1);
+  });
+
+  test("bad shapes are rejected per entry (and a whole batch can't be empty)", async () => {
+    const empty = await api("/api/review", { method: "POST", cookie: tokenA, body: { reviews: [] } });
+    assert.equal(empty.status, 400);
+
+    const bad = await grade(tokenA, [
+      { cardId: cards[2], sessionId: deck, grade: "perfect" },
+      { cardId: "nope", sessionId: deck, grade: "good" },
+      { cardId: cards[2], sessionId: deck, grade: "easy" },
+    ]);
+    assert.equal(bad.status, 200);
+    assert.equal(bad.data.recorded, 1, "the one valid entry still lands");
+    assert.equal(bad.data.skipped.length, 2);
+    assert.match(bad.data.skipped[0].reason, /grade must be/);
+    assert.match(bad.data.skipped[1].reason, /integers/);
+  });
+
+  test("reviews are study results too: stats, streak and the activity feed", async () => {
+    const stats = await api("/api/stats", { cookie: tokenA });
+    assert.equal(stats.status, 200);
+    assert.ok(stats.data.overall.reviewsTracked >= 3, "scheduled cards are counted");
+    assert.equal(stats.data.overall.dueNow, 0, "everything is scheduled in the future");
+    assert.equal(stats.data.overall.lapses, 1, "the one 'Again' was a lapse");
+    assert.ok(stats.data.overall.nextDueAt, "…and the next due date is known");
+
+    const rows = await pool.query(
+      `SELECT count(*) filter (where correct)::int AS correct,
+              count(*) filter (where not correct)::int AS wrong,
+              count(*)::int AS total
+         FROM study_results WHERE user_id = $1 AND mode = 'review'`,
+      [USER_A]
+    );
+    assert.equal(rows.rows[0].wrong, 1, "only the 'Again' counts as a miss");
+    assert.ok(rows.rows[0].total >= 6, "every graded card became a study result");
+
+    const feed = stats.data.recent.filter((r) => r.mode === "review");
+    assert.ok(feed.length > 0, "recent activity includes review answers");
+    assert.ok(feed.every((r) => r.deckTitle === "E2E Review Deck"));
+
+    const deckStat = stats.data.decks.find((d) => d.sessionId === deck);
+    assert.ok(deckStat, "the reviewed deck is in the stats list");
+    assert.equal(deckStat.trackedCount, 3, "all three cards are in rotation");
+    assert.equal(deckStat.dueCount, 0);
+
+    // The daily new-card budget is reported honestly (3 cards, 20/day).
+    const queue = await api("/api/review", { cookie: tokenA });
+    assert.ok(queue.data.counts.newIntroducedToday >= 3, "introduced cards are counted");
+  });
+
+  test("deck badges and the ?sessionId filter follow the schedule", async () => {
+    const list = await api("/api/sessions", { cookie: tokenA });
+    assert.equal(list.status, 200);
+    const badge = list.data.sessions.find((s) => s.id === deck);
+    assert.equal(badge.trackedCount, 3, "cards in rotation are counted per deck");
+    assert.equal(badge.dueCount, 0);
+
+    // Force a card due again → the deck badge and the queue agree.
+    await pool.query(
+      `UPDATE card_reviews SET due_at = now() - interval '1 hour' WHERE user_id = $1 AND card_id = $2`,
+      [USER_A, cards[1]]
+    );
+    const badged = await api("/api/sessions", { cookie: tokenA });
+    assert.equal(badged.data.sessions.find((s) => s.id === deck).dueCount, 1);
+
+    const oneDeck = await api(`/api/review?sessionId=${deck}`, { cookie: tokenA });
+    assert.equal(oneDeck.data.counts.due, 1);
+    assert.equal(oneDeck.data.queue.length, 1);
+    assert.equal(oneDeck.data.queue[0].cardId, cards[1]);
+    assert.ok(oneDeck.data.queue[0].dueAt, "due cards expose their schedule");
+
+    // A deck filter never widens the scope: B's deck id under A's cookie is empty.
+    const foreign = await api(`/api/review?sessionId=${deckB1}`, { cookie: tokenA });
+    assert.equal(foreign.status, 200);
+    assert.deepEqual(foreign.data.queue, []);
+    assert.equal(foreign.data.counts.due, 0);
+  });
+
+  test("deleting a deck cascades to its review schedules", async () => {
+    const before = await pool.query(
+      `SELECT count(*)::int AS n FROM card_reviews WHERE session_id = $1`,
+      [deck]
+    );
+    assert.equal(before.rows[0].n, 3);
+
+    const del = await api(`/api/sessions/${deck}`, { method: "DELETE", cookie: tokenA });
+    assert.equal(del.status, 200);
+
+    const gone = await pool.query(`SELECT count(*)::int AS n FROM card_reviews WHERE session_id = $1`, [
+      deck,
+    ]);
+    assert.equal(gone.rows[0].n, 0, "schedules follow the deck out");
+
+    // …and the user's counters drop back to zero.
+    const stats = await api("/api/stats", { cookie: tokenA });
+    assert.equal(stats.data.overall.reviewsTracked, 0);
+  });
+});
