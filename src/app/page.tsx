@@ -1053,6 +1053,8 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
             summary?: string;
             /** Model that produced the cards (the server may have failed over). */
             model?: string;
+            /** Provider that produced the cards: "gemini" or "openrouter". */
+            provider?: string;
             /** Set when the server had to switch models (rate limit / unavailable). */
             notice?: string;
           }

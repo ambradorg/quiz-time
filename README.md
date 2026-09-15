@@ -52,9 +52,15 @@ npm run dev
 | Variable | Required | Notes |
 | --- | --- | --- |
 | `DATABASE_URL` | yes | Postgres connection string. **Required at build time** – `src/db/index.ts` throws if it's missing. |
-| `GEMINI_API_KEY` | for generating cards | Without it the app shows a setup screen instead of the upload form. |
-| `GEMINI_MODEL` | no | Overrides the main model. Default main model is `gemini-3.6-flash`, which fails over to `gemini-3.1-flash-lite` → `antigravity` → `gemini-3.5-flash-lite` when it isn't available for your key **or when it hits its rate limit** — see [Gemini model failover](#gemini-model-failover-rate-limits). |
+| `GEMINI_API_KEY` | for generating cards¹ | Key for the primary provider (Google Gemini). |
+| `OPENROUTER_API_KEY` | for generating cards¹ | Optional but recommended: when **every** Gemini model is at its limit, QuizTime falls back to OpenRouter's free models — see [AI model failover](#ai-model-failover-rate-limits). |
+| `GEMINI_MODEL` | no | Overrides the main model. Default main model is `gemini-3.6-flash` — see [AI model failover](#ai-model-failover-rate-limits). |
+| `GEMINI_FALLBACK_MODELS` | no | Overrides the Gemini fallback order (comma-separated). Default: `gemini-3.1-flash-lite, antigravity, gemini-3.5-flash-lite`. `antigravity` is a Gemini *agent* (higher token use) — drop it to save tokens. |
+| `OPENROUTER_MODELS` | no | Overrides the OpenRouter fallback list (comma-separated). Default: `openrouter/free, nvidia/nemotron-3-super-120b-a12b:free, inclusionai/ling-3.0-flash-vl:free`. The free lineup rotates monthly — see [OpenRouter free models](https://openrouter.ai/models) (filter "Free"). |
 | `GEMINI_RATE_LIMIT_COOLDOWN_SECONDS` | no | How long a rate-limited model is skipped before being tried again (default `300`). Google's own `retryDelay` hint wins when the API sends one; the value is clamped to 15 s–30 min and doubles on repeated hits. |
+
+¹ The app generates flashcards with **either** key — with both it simply has a
+longer safety net.
 | `AUTH_SECRET` | for sign-in | Auth.js secret. Generate: `openssl rand -base64 32`. |
 | `AUTH_GOOGLE_ID` | for sign-in | Google OAuth client ID. |
 | `AUTH_GOOGLE_SECRET` | for sign-in | Google OAuth client secret. |
@@ -63,23 +69,60 @@ npm run dev
 > ⚠️ Never commit `.env`. It is listed in `.gitignore`; if it was ever pushed,
 > rotate the API key.
 
-## Gemini model failover (rate limits)
+## AI model failover (rate limits)
 
-Generation never fails just because one model is busy. `src/lib/gemini.ts`
-tries the models in order —
-
-`GEMINI_MODEL` (default `gemini-3.6-flash`) → `gemini-3.1-flash-lite` →
-`antigravity` → `gemini-3.5-flash-lite`
-
-— and moves to the next one when a model:
+Generation never fails just because one model is busy. The failover engine
+(`src/lib/failover.ts`) walks a candidate list — one AI model on one provider
+per step — and moves to the next candidate when one:
 
 - **hits its rate limit or quota** (HTTP 429 — "You exceeded your current
-  quota", "Resource has been exhausted (e.g. check quota)", or Google's
-  "model is overloaded"), or
-- **isn't available for your API key** (HTTP 404 / "not a valid model").
+  quota", "Resource has been exhausted (e.g. check quota)", Google's "model
+  is overloaded", or OpenRouter's "temporarily rate-limited upstream"), or
+- **isn't available for your API key** (HTTP 404 / "not a valid model", a
+  rejected key, a negative OpenRouter balance), or
+- **physically can't read the upload** (e.g. a PDF sent to OpenRouter, which
+  has no PDF input — see below).
 
 Anything else (a 400 bad request, a safety block, a network failure) is
 rethrown straight away, because another model wouldn't fix it.
+
+The default chain, best first:
+
+`GEMINI_MODEL` (default `gemini-3.6-flash`) → `gemini-3.1-flash-lite` →
+`antigravity` → `gemini-3.5-flash-lite` → `openrouter/free` →
+`nvidia/nemotron-3-super-120b-a12b:free` → `inclusionai/ling-3.0-flash-vl:free`
+
+A provider whose API key isn't configured is simply absent from the chain,
+so the app works with Gemini only, OpenRouter only, or both.
+
+### OpenRouter fallback
+
+[OpenRouter](https://openrouter.ai) is an OpenAI-compatible gateway with a
+rotating pool of `:free` models, used here purely as a last-resort safety
+net when every Gemini model is out of quota. Things worth knowing:
+
+- **The free tier is rate-limited, not metered:** ~20 requests/minute and
+  **50 requests/day** on `:free` models — or **1,000/day** after a *one-time*
+  $10 credit purchase (the credits never expire). A limit hit shows up as a
+  429 and is handled exactly like a Gemini limit (cooldown, next model).
+- **The roster rotates monthly.** Llama and DeepSeek `:free` variants come
+  and go, so the list is env-configurable (`OPENROUTER_MODELS`) and a
+  retired model just 404s and gets skipped — no code change needed.
+  `openrouter/free` is a special router that picks any available free model
+  for you, which is why it leads the list.
+- **Free models are low-priority:** upstream providers refuse saturated
+  requests with 429s even on a fresh account, so the chain tries several
+  OpenRouter models in a row. One quirk: OpenRouter sometimes reports
+  upstream failures as HTTP 200 with an `error` object in the body — the
+  adapter lifts the real status out of it so it's classified correctly.
+- **Input differences vs Gemini:** OpenRouter has no PDF input, so when it
+  has to serve a PDF upload the pages are converted to text **on the server**
+  (pdf.js, already a dependency; scanned PDFs without a text layer are
+  rejected with a clear message). HEIC/HEIF photos aren't accepted either —
+  you get a "convert to JPEG/PNG" hint. Images otherwise go across as base64
+  data URLs (the default list includes a vision model for that reason).
+- **Privacy:** some free endpoints may use your prompts for training — for
+  most students that's fine, but keep it in mind for sensitive material.
 
 Behaviour worth knowing:
 
@@ -90,13 +133,16 @@ Behaviour worth knowing:
   window doubles each time the same model fails again in a row and is capped
   at 30 minutes. When it expires the primary model is tried first again — the
   app switches back on its own.
-- **The user is told.** `POST /api/scan` returns the model that produced the
-  cards in `model`, plus a human-readable `notice` when it had to switch
-  ("gemini-3.6-flash hit its request limit — generated with
-  gemini-3.1-flash-lite instead."), which the UI shows as a toast.
+- **The user is told.** `POST /api/scan` returns the model (and provider)
+  that produced the cards in `model` / `provider`, plus a human-readable
+  `notice` when it had to switch ("gemini-3.6-flash hit its request limit —
+  generated with gemini-3.1-flash-lite instead.", or across providers:
+  "… generated with openrouter/free (OpenRouter) instead."), which the UI
+  shows as a toast.
 - **When every model is at its limit**, the endpoint answers **429** with
-  "Every Gemini model is at its request limit right now … please try again"
-  rather than a generic 500.
+  "Every AI model is at its request limit right now (gemini-3.6-flash, …,
+  openrouter/free (OpenRouter)) … please try again" rather than a generic
+  500.
 - The cooldown notes live in module memory — one map per server instance, the
   same trade-off as the request rate limiter in `src/lib/rate-limit.ts`.
 
@@ -266,13 +312,17 @@ npm run build && npm run start          # or: npm run dev
 BASE_URL=http://127.0.0.1:3000 npm run test:e2e
 ```
 
-Two suites need neither a database nor an API key and cover the model
+Three suites need neither a database nor an API key and cover the model
 failover described above:
 
 ```bash
-npm run test:gemini   # src/lib/gemini.ts driven with SDK-shaped 429/404 errors
-npm run test:scan     # the whole POST /api/scan handler, with the real
-                      # @google/generative-ai SDK pointed at a fake endpoint
+npm run test:failover   # the src/lib/failover.ts engine, driven with
+                        # Gemini/OpenRouter-shaped 429/404/401 errors
+npm run test:openrouter # the OpenRouter adapter (parts→content, error
+                        # normalization) with a fake endpoint
+npm run test:scan       # the whole POST /api/scan handler, with the real
+                        # @google/generative-ai SDK + OpenRouter adapter
+                        # pointed at fake endpoints
 ```
 
 `scripts/seed-demo-stats.mjs` seeds a demo user with decks + study history
@@ -352,16 +402,17 @@ npm run typecheck   # tsc --noEmit
 npm run db:generate # generate a new migration from src/db/schema.ts
 npm run db:migrate  # apply committed migrations to DATABASE_URL
 npm run db:setup-test # create/reset the local test db + apply migrations
-npm run test:gemini # model-failover unit tests (no db, no network)
-npm run test:scan   # /api/scan failover tests (real SDK, fake Google endpoint)
-npm run test:e2e    # auth/stats e2e suite (minted JWTs, real HTTP)
+npm run test:failover   # failover-engine unit tests (no db, no network)
+npm run test:openrouter # OpenRouter adapter tests (fake endpoint)
+npm run test:scan       # /api/scan failover tests (real SDK, fake endpoints)
+npm run test:e2e        # auth/stats e2e suite (minted JWTs, real HTTP)
 ```
 
 ## Notes
 
 - **AI generation is sign-in-only** and rate-limited to 10 requests per 10
   minutes per user on `/api/scan` (soft limit, per server instance) so nobody
-  can burn your Gemini free tier.
+  can burn your Gemini free tier (or your OpenRouter free quota).
 - `GET /api/config` tells the frontend whether `GEMINI_API_KEY` is set, so the
   app shows the setup screen instead of a broken upload form.
 - When a model hits its rate limit, generation **automatically moves to the
