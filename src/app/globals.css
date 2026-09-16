@@ -1285,6 +1285,138 @@ body {
   }
 }
 
+/* ─── Nibbles 🐹 the hamster mascot ────────────────────────────────────── */
+.mascot-wrap {
+  position: fixed;
+  right: 14px;
+  bottom: 92px; /* floats just above the nav dock */
+  z-index: 90; /* above content, below the nav (100) and toast */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  pointer-events: none; /* only the bubble and the avatar are clickable */
+}
+
+.mascot-avatar {
+  pointer-events: auto;
+  width: 88px;
+  height: 88px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  filter: drop-shadow(0 10px 16px rgba(29, 78, 216, 0.3));
+  animation: mascot-pop-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  transition: transform 0.15s ease;
+}
+.mascot-avatar:hover { transform: scale(1.05); }
+.mascot-avatar:active { transform: scale(0.92); }
+.mascot-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  transform-origin: 50% 95%;
+  animation: mascot-bob 2.8s ease-in-out infinite;
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* Celebrating: happy hops while the cheer bubble is up. */
+.mascot-avatar.mascot-excited img { animation: mascot-bounce 0.55s ease-in-out infinite; }
+
+.mascot-bubble {
+  pointer-events: auto;
+  position: relative;
+  width: min(295px, calc(100vw - 120px));
+  margin: 0 8px 10px 0;
+  background: #ffffff;
+  border: 2.5px solid #dbeafe;
+  border-radius: 18px;
+  padding: 12px 14px;
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  box-shadow:
+    0 12px 26px rgba(29, 78, 216, 0.2),
+    inset 0 3px 0 rgba(219, 234, 254, 0.9);
+  animation: mascot-pop-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+/* Speech-bubble tail pointing down at Nibbles. */
+.mascot-bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -9px;
+  right: 34px;
+  width: 16px;
+  height: 16px;
+  background: #ffffff;
+  border-right: 2.5px solid #dbeafe;
+  border-bottom: 2.5px solid #dbeafe;
+  border-bottom-right-radius: 4px;
+  transform: rotate(45deg);
+}
+
+.mascot-text { margin: 0; }
+.mascot-close {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: #eff4ff;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+.mascot-close:hover { background: #dbeafe; color: var(--text); }
+
+.mascot-caret {
+  display: inline-block;
+  width: 2.5px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: var(--blue-dark);
+  animation: mascot-caret-blink 0.8s step-start infinite;
+}
+
+.mascot-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.mascot-actions .btn { padding: 6px 12px; font-size: 12.5px; }
+.mascot-skip { font-size: 11.5px !important; text-decoration: underline; padding: 6px 4px !important; }
+
+@keyframes mascot-bob {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50% { transform: translateY(-6px) rotate(2deg); }
+}
+@keyframes mascot-bounce {
+  0%, 100% { transform: translateY(0) scale(1); }
+  30% { transform: translateY(-10px) scale(1.04); }
+  60% { transform: translateY(0) scale(0.96); }
+  80% { transform: translateY(-4px) scale(1.01); }
+}
+@keyframes mascot-pop-in {
+  0% { transform: scale(0); opacity: 0; }
+  70% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes mascot-caret-blink {
+  0%, 60% { opacity: 1; }
+  61%, 100% { opacity: 0; }
+}
+
 /* Respect users who prefer less motion. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
