@@ -5899,8 +5899,18 @@ export default function App() {
   }, []);
 
   // ── Draft deck (generated but not saved yet) ──────────────────────────────
-  // Lazy initializer: restored from localStorage on first client render.
-  const [draft, setDraft] = useState<PendingDeck | null>(() => loadDraft());
+  // Hydration-safe: reading localStorage during the first client render would
+  // differ from the server's HTML ("hydration failed" warnings). Restored one
+  // frame after mount instead — the same pattern IOSInstallPrompt documents:
+  // first client render matches the server, then the banner fades in.
+  const [draft, setDraft] = useState<PendingDeck | null>(null);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const restored = loadDraft();
+      if (restored) setDraft(restored);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
   const handleCardsReady = (cards: Flashcard[], title: string, summary: string, sourceType: string) => {
     setPendingCards(cards);
