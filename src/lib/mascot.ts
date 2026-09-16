@@ -7,7 +7,23 @@
  * it is mounted and turns the event into a speech-bubble moment.
  */
 
-export type MascotMood = "idle" | "wave" | "point" | "celebrate" | "sleepy" | "sad";
+export type MascotMood =
+  | "idle"
+  | "wave"
+  | "point"
+  | "celebrate"
+  | "sleepy"
+  | "sad"
+  /** Munching a sunflower seed — the 90%+ score celebration. */
+  | "nibble"
+  /** Paw on chin while the AI generates flashcards. */
+  | "thinking"
+  /** Leaning in from the screen edge while you answer. */
+  | "peek"
+  /** Star-eyed amazement for hot streaks. */
+  | "wow"
+  /** Offering a little heart — encouragement after misses. */
+  | "heart";
 
 /** Pose artwork, one per mood (see public/hamster/). */
 export const MASCOT_IMAGES: Record<MascotMood, string> = {
@@ -17,6 +33,11 @@ export const MASCOT_IMAGES: Record<MascotMood, string> = {
   celebrate: "/hamster/hamster-celebrate.png",
   sleepy: "/hamster/hamster-sleepy.png",
   sad: "/hamster/hamster-sad.png",
+  nibble: "/hamster/hamster-nibble.png",
+  thinking: "/hamster/hamster-thinking.png",
+  peek: "/hamster/hamster-peek.png",
+  wow: "/hamster/hamster-wow.png",
+  heart: "/hamster/hamster-heart.png",
 };
 
 /**
@@ -30,6 +51,16 @@ export type MascotEvent =
   | { type: "scored-done"; mode: "exam" | "identify" | "enumerate"; pct: number }
   /** A spaced-repetition round finished — pct = first-try recall. */
   | { type: "review-done"; pct: number }
+  /** Mid-run hot streak — n correct answers in a row in a scored run. */
+  | { type: "streak"; n: number }
+  /** Three misses in a row mid-run — Nibbles turns coach, not judge. */
+  | { type: "struggling" }
+  /** The very first run on a brand-new deck. */
+  | { type: "first-run" }
+  /** The AI is generating flashcards — Nibbles thinks along until it lands. */
+  | { type: "generating" }
+  /** A scored/study run is active — Nibbles peeks in from the screen edge. */
+  | { type: "peek"; active: boolean }
   /** Free-form line, for one-off moments. */
   | { type: "say"; text: string; mood?: MascotMood };
 

@@ -39,7 +39,7 @@ import {
 } from "@/lib/offline";
 import { useOfflineIdentity, useOnlineStatus, useOutbox } from "@/lib/use-offline";
 import { MascotHost } from "@/components/hamster-mascot";
-import { mascotEvent } from "@/lib/mascot";
+import { mascotEvent, mascotSay } from "@/lib/mascot";
 import {
   OfflineBadge,
   OfflineChip,
@@ -1098,6 +1098,9 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
           setLoading(false);
           return;
         }
+
+        //  Nibbles thinks along while the AI chews the upload into cards.
+        mascotEvent({ type: "generating" });
         for (const item of picked) {
           if (item.file.size > MAX_UPLOAD_MB * 1024 * 1024) {
             setError(`"${item.file.name}" is ${formatSize(item.file.size)} — please use files under ${MAX_UPLOAD_MB} MB.`);
@@ -1346,6 +1349,7 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
         }
 
         onCardsReady(mergedCards, mergedTitle, mergedSummary, sourceType);
+        mascotSay("Ta-da! Your flashcards are ready — open your new study set and let's go! 🎉", "wave");
         // If the AI had to switch models (its rate limit was hit, or the model
         // isn't available) the server says so — that's worth showing instead of
         // the plain success toast.
@@ -1356,12 +1360,14 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
         }
       } else {
         if (!textInput.trim()) { setError("Please enter some text to study"); setLoading(false); return; }
+        mascotEvent({ type: "generating" });
         const formData = new FormData();
         formData.append("text", textInput.trim());
         sourceType = "text";
 
         const result = await sendScanRequest(formData);
         onCardsReady(result.cards || [], result.title || "Study Set", result.summary || "", sourceType);
+        mascotSay("Ta-da! Your flashcards are ready — open your new study set and let's go! 🎉", "wave");
         if (result.notice) {
           showToast(result.notice, TriangleAlert);
         } else {
@@ -1370,6 +1376,7 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
       }
     } catch (err) {
       setError((err as Error).message);
+      mascotSay("Oh crumbs, that didn't work 😅 Shake it off — let's try again!", "sad");
     } finally {
       setLoading(false);
       setStatusText("");
@@ -3318,6 +3325,8 @@ function QuizPage({
   const [mode, setMode] = useState<QuizMode>("select");
   /** One "you're offline" toast per deck visit, not one per answer. */
   const queuedNotice = useRef(false);
+  /** Consecutive misses inside the current scored run (Nibbles' pep talk). */
+  const missRunRef = useRef(0);
 
   const noteQueued = useCallback(() => {
     if (queuedNotice.current) return;
@@ -3403,9 +3412,25 @@ function QuizPage({
     })();
   }, [refreshDueCount]);
 
+  /** Nibbles cheers the very first run on a brand-new deck (once per deck). */
+  const cheerIfFreshDeck = () => {
+    if (!sessionId) return;
+    const key = `quiztime-mascot-firstrun:${sessionId}`;
+    try {
+      if (window.localStorage.getItem(key) === "1") return;
+      // This deck already has history → not brand-new, no cheer.
+      if (progress.some((p) => p.attempts > 0 || p.isKnown)) return;
+      window.localStorage.setItem(key, "1");
+    } catch {
+      return; // storage blocked — skip the cheer rather than risk spam
+    }
+    mascotEvent({ type: "first-run" });
+  };
+
   /** Fetch this deck's due queue, then hand over to the review runner. */
   const startReview = async () => {
     if (!sessionId) return;
+    cheerIfFreshDeck();
     setReviewLoading(true);
     try {
       const data = await loadReviewData(sessionId, 50);
@@ -3617,6 +3642,8 @@ function QuizPage({
     setExamDone(false);
     setStartedAt(Date.now());
     setElapsed(0);
+    missRunRef.current = 0;
+    cheerIfFreshDeck();
     setMode(kind);
   };
 
@@ -3648,6 +3675,23 @@ function QuizPage({
     setScore((s) => s + points);
     setStreak(newStreak);
     setBestStreak((b) => Math.max(b, newStreak));
+
+    // 🐹 In-run reactions: hot streaks cheer, three misses get a pep talk.
+    if (isCorrect) {
+      missRunRef.current = 0;
+      if (
+        newStreak === 3 ||
+        newStreak === 5 ||
+        newStreak === 10 ||
+        (newStreak > 10 && newStreak % 5 === 0)
+      ) {
+        mascotEvent({ type: "streak", n: newStreak });
+      }
+    } else {
+      missRunRef.current += 1;
+      if (missRunRef.current === 3) mascotEvent({ type: "struggling" });
+    }
+
     await updateProgress(card.id, isCorrect, outcomeMode);
   };
 
@@ -3699,6 +3743,7 @@ function QuizPage({
       setActiveCards(buildStudyDeck(shuffleStudy, unknownOnly));
       setCurrentIndex(0);
       setDone(false);
+      cheerIfFreshDeck();
       setMode("study");
     } else if (m === "review") {
       void startReview();
@@ -3771,6 +3816,18 @@ function QuizPage({
     mascotEvent({ type: "scored-done", mode, pct });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [examDone]);
+
+  // 🐹 While a run is answering, Nibbles peeks in from the screen's edge.
+  useEffect(() => {
+    const active =
+      (mode === "study" && !done) ||
+      ((mode === "exam" || mode === "identify" || mode === "enumerate") && !examDone) ||
+      mode === "review";
+    mascotEvent({ type: "peek", active });
+  }, [mode, done, examDone]);
+
+  // Leaving the deck always ends the peek.
+  useEffect(() => () => mascotEvent({ type: "peek", active: false }), []);
 
   return (
     <div style={{ padding: "16px" }}>

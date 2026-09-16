@@ -21,8 +21,15 @@ import {
    • login            → "Hello, <name>!" tour for new users, or "Welcome
                         back, <name>!" for returning users
    • finishing a deck → a celebration unique to that mode (bounce / spin /
-                        dance / card-flip), a ⭐ burst for 90%+ scores, or a
-                        gentle pep talk for rough rounds
+                        dance / card-flip); 90%+ makes him nibble a sunflower
+                        seed under a ⭐ burst, rough rounds get a pep talk
+   • mid-run moments  → cheers 3 / 5 / 10+ answer streaks with star-eyed wow,
+                        offers a little heart after 3 misses in a row, and
+                        celebrates a brand-new deck's very first run
+   • while answering  → he peeks in from the screen's right edge (half
+                        tucked away), sliding fully in whenever he speaks
+   • AI generation    → thinks along (paw on chin, floating 💭) while notes
+                        become flashcards, cheers when they land
    • not studying for a few days → he dozes off right on the screen (Zzz…)
    • losing a streak  → a tearful little speech and a pep talk
    ════════════════════════════════════════════════════════════════════════ */
@@ -67,11 +74,83 @@ const WELCOME_BACK: string[] = [
   "Hi again, {first}! 🐹 A few minutes of reviewing a day keeps the forgetting away!",
 ];
 
+/** Pick a random line from a list. */
+function pick<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+/** Mid-run hot streaks: little hop cheers at 3 / 5 / 10+ in a row. */
+function streakLine(n: number, first: string): Step {
+  if (n >= 10) {
+    return {
+      mood: "wow",
+      anim: "bounce",
+      text: `UNSTOPPABLE, ${first} — ${n} in a row! 🔥 Even I can tell that's a hot streak, and I'm just a hamster!`,
+    };
+  }
+  if (n >= 5) {
+    return {
+      mood: "wow",
+      anim: "bounce",
+      text: `${n} in a row, ${first}! 🔥 Your brain is crunching these like sunflower seeds!`,
+    };
+  }
+  return {
+    mood: "wow",
+    anim: "bounce",
+    text: `Squeak! 3 in a row already, ${first}! 🔥 Keep that streak going!`,
+  };
+}
+
+/** Three misses in a row — a coach, not a judge. */
+function struggleStep(first: string): Step {
+  return pick([
+    {
+      mood: "heart",
+      text: `Three tricky ones in a row — that's exactly how brains grow, ${first}! 💪 Peek at the answer; we'll smash it next time!`,
+    },
+    {
+      mood: "heart",
+      text: `Ooh, tough stretch, ${first} 🤗 Misses are just memories under construction. You've got this!`,
+    },
+  ]);
+}
+
+/** A brand-new deck's very first run. */
+function firstRunStep(first: string): Step {
+  return pick([
+    {
+      mood: "wave",
+      text: `Ooh, a brand-new deck! 🐹 First runs are magic, ${first} — let's see what sticks!`,
+    },
+    {
+      mood: "celebrate",
+      anim: "bounce",
+      text: `Fresh cards, fresh start! 🌱 Show me what you've got, ${first}!`,
+    },
+  ]);
+}
+
+/** While the AI is turning notes into flashcards. */
+function generatingStep(): Step {
+  return pick([
+    {
+      mood: "thinking",
+      text: "Ooh, fresh notes! 🐹 Let me nibble these into flashcards… hmm, which bits are the important ones…",
+    },
+    {
+      mood: "thinking",
+      text: "Reading your notes very carefully… 🤔✨ I can almost taste the flashcards!",
+    },
+  ]);
+}
+
 /**
  * Every study-mode finish gets its OWN celebration animation, so it never
  * feels the same twice: flips for Study, spins for Exam, a dance for
- * Identification, hops for Enumeration & Review. 90%+ gets a ⭐ burst,
- * and a rough round gets a pep talk instead of confetti.
+ * Identification, hops for Enumeration & Review. 90%+ makes Nibbles nibble
+ * a sunflower seed under a ⭐ burst, and a rough round gets a pep talk
+ * instead of confetti.
  */
 const FINISH_ANIM: Record<string, CelebrateAnim> = {
   study: "flip",
@@ -87,7 +166,7 @@ function completionLines(ev: MascotEvent, first: string): Step {
       const anim = FINISH_ANIM.study;
       if (ev.knownPct >= 90) {
         return {
-          mood: "celebrate",
+          mood: "nibble",
           anim,
           burst: true,
           text: `AMAZING, ${first}! You knew ${ev.knownPct}% of the deck — you own Study Mode 🎉 Now move to another mode: try Exam Mode, 4 choices and instant score!`,
@@ -117,7 +196,7 @@ function completionLines(ev: MascotEvent, first: string): Step {
             : "Now move to another study mode: give Spaced Review a go — it resurfaces cards right before you forget them!";
       if (ev.pct >= 90) {
         return {
-          mood: "celebrate",
+          mood: "nibble",
           anim,
           burst: true,
           text: `WOW, ${first}! ${ev.pct}% on ${modeName} — superstar! 🎉⭐ ${nextLine}`,
@@ -138,7 +217,7 @@ function completionLines(ev: MascotEvent, first: string): Step {
     case "review-done":
       if (ev.pct >= 70) {
         return {
-          mood: "celebrate",
+          mood: ev.pct >= 90 ? "nibble" : "celebrate",
           anim: FINISH_ANIM.review,
           burst: ev.pct >= 90,
           text: `Review round complete — ${ev.pct}% recalled! 🎉 Incredible memory, ${first}! Come back tomorrow to keep your streak going!`,
@@ -306,8 +385,16 @@ export function MascotHost({
 }) {
   const [bubble, setBubble] = useState<BubbleState | null>(null);
   const [shown, setShown] = useState(0);
-  /** Ambient pose between bubbles — turns sleepy when you've been away. */
-  const [ambient, setAmbient] = useState<"idle" | "sleepy">("idle");
+  /** Ambient pose between bubbles — sleepy when away, thinking while generating. */
+  const [ambient, setAmbient] = useState<"idle" | "sleepy" | "thinking">("idle");
+  /** Sync read of the ambient pose for event handlers (no stale closures). */
+  const ambientRef = useRef<"idle" | "sleepy" | "thinking">("idle");
+  /** A run is answering right now — Nibbles peeks in from the screen edge. */
+  const [peeking, setPeeking] = useState(false);
+  const setAmbientNow = useCallback((m: "idle" | "sleepy" | "thinking") => {
+    ambientRef.current = m;
+    setAmbient(m);
+  }, []);
   /** Synchronous "is a bubble on screen" check for the async habit chain. */
   const bubbleVisible = useRef(false);
   const keySeq = useRef(0);
@@ -362,11 +449,11 @@ export function MascotHost({
       queuedStep.current = null;
       clearChainTimer();
       chainTimer.current = setTimeout(() => {
-        if (queued.mood === "sleepy") setAmbient("sleepy");
+        if (queued.mood === "sleepy") setAmbientNow("sleepy");
         showSingle(queued);
       }, CHAIN_DELAY_MS);
     }
-  }, [showSingle]);
+  }, [showSingle, setAmbientNow]);
 
   // ── Greeting on login (+ habit check: sleepy / missed-streak) ───────────
   useEffect(() => {
@@ -436,14 +523,38 @@ export function MascotHost({
   useEffect(() => {
     const first = firstName(userName);
     return registerMascotListener((ev: MascotEvent) => {
+      if (ev.type === "peek") {
+        setPeeking(ev.active);
+        return;
+      }
       if (ev.type === "say") {
+        // A free-form line means whatever he was thinking about is over.
+        if (ambientRef.current === "thinking") setAmbientNow("idle");
         showSingle({ text: ev.text, mood: ev.mood ?? "idle" });
         return;
       }
-      // Finishing a run wakes him up, then he cheers a beat after the
-      // results screen lands.
-      setAmbient("idle");
+      if (ev.type === "generating") {
+        // He keeps the thinking pose until the next moment lands.
+        setAmbientNow("thinking");
+        showSingle(generatingStep());
+        return;
+      }
+      // Everything else wakes him up.
+      setAmbientNow("idle");
       queuedStep.current = null;
+      if (ev.type === "streak") {
+        setTimeout(() => showSingle(streakLine(ev.n, first)), 400);
+        return;
+      }
+      if (ev.type === "struggling") {
+        setTimeout(() => showSingle(struggleStep(first)), 400);
+        return;
+      }
+      if (ev.type === "first-run") {
+        setTimeout(() => showSingle(firstRunStep(first)), 400);
+        return;
+      }
+      // Finishing a run: he cheers a beat after the results screen lands.
       setTimeout(() => showSingle(completionLines(ev, first)), 600);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -501,10 +612,11 @@ export function MascotHost({
       return;
     }
     if (ambient === "sleepy") {
-      setAmbient("idle");
+      setAmbientNow("idle");
       showSingle(WAKE_LINES[Math.floor(Math.random() * WAKE_LINES.length)]);
       return;
     }
+    if (ambient === "thinking") setAmbientNow("idle");
     showSingle(TAP_TIPS[Math.floor(Math.random() * TAP_TIPS.length)]);
   };
 
@@ -514,14 +626,17 @@ export function MascotHost({
     setBubble({ ...bubble, index: bubble.index + 1 });
   };
 
-  const mood: MascotMood = bubble && active ? active.mood : ambient;
-  const celebrating = Boolean(bubble && active?.mood === "celebrate");
+  const mood: MascotMood = bubble && active ? active.mood : peeking ? "peek" : ambient;
+  const celebrating = Boolean(
+    bubble && (active?.mood === "celebrate" || active?.mood === "nibble" || active?.mood === "wow")
+  );
   const anim: CelebrateAnim = active?.anim ?? "bounce";
   const dozing = !bubble && ambient === "sleepy";
+  const thinking = !bubble && ambient === "thinking";
   const isLastTutorialStep = bubble?.kind === "tutorial" && bubble.index >= bubble.steps.length - 1;
 
   return (
-    <div className="mascot-wrap">
+    <div className={`mascot-wrap${peeking && !bubble ? " mascot-peeking" : ""}`}>
       {/* Preload every pose so a mood swap never flickers. */}
       <div style={{ display: "none" }} aria-hidden>
         {Object.values(MASCOT_IMAGES).map((src) => (
@@ -597,6 +712,7 @@ export function MascotHost({
           "mascot-avatar",
           celebrating ? `mascot-anim-${anim}` : "",
           dozing ? "mascot-sleepy" : "",
+          thinking ? "mascot-thinking" : "",
         ]
           .filter(Boolean)
           .join(" ")}
@@ -611,6 +727,11 @@ export function MascotHost({
             <span>z</span>
             <span>z</span>
             <span>Z</span>
+          </span>
+        )}
+        {thinking && (
+          <span className="mascot-thought" aria-hidden>
+            <span>💭</span>
           </span>
         )}
       </button>

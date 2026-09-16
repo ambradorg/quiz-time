@@ -1295,6 +1295,15 @@ body {
   flex-direction: column;
   align-items: flex-end;
   pointer-events: none; /* only the bubble and the avatar are clickable */
+  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Peeking while you answer: half tucked behind the screen's right edge.
+   The pose's paws land right at the edge, like he's gripping it. */
+.mascot-wrap.mascot-peeking { transform: translateX(56px); }
+.mascot-wrap.mascot-peeking .mascot-avatar { transform: rotate(4deg); }
+.mascot-wrap.mascot-peeking .mascot-avatar img {
+  animation: mascot-bob 3.4s ease-in-out infinite;
 }
 
 .mascot-avatar {
@@ -1331,6 +1340,25 @@ body {
 /* Dozing: he visibly breathes slower when you haven't studied in a while. */
 .mascot-avatar.mascot-sleepy { position: relative; }
 .mascot-avatar.mascot-sleepy img { animation: mascot-bob 4.6s ease-in-out infinite; }
+
+/* Thinking along while the AI generates: a slow, curious bob. */
+.mascot-avatar.mascot-thinking { position: relative; }
+.mascot-avatar.mascot-thinking img { animation: mascot-bob 4.2s ease-in-out infinite; }
+
+/* Floating 💭 while Nibbles thinks. */
+.mascot-thought {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.mascot-thought span {
+  position: absolute;
+  top: -10px;
+  right: 4px;
+  font-size: 20px;
+  opacity: 0;
+  animation: mascot-zzz-float 3s ease-out infinite;
+}
 
 /* Floating "z z Z" while Nibbles sleeps. */
 .mascot-zzz {
