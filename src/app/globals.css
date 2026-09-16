@@ -1322,8 +1322,47 @@ body {
   user-select: none;
   -webkit-user-select: none;
 }
-/* Celebrating: happy hops while the cheer bubble is up. */
-.mascot-avatar.mascot-excited img { animation: mascot-bounce 0.55s ease-in-out infinite; }
+/* Celebrating: each study mode gets its own victory animation. */
+.mascot-avatar.mascot-anim-bounce img { animation: mascot-bounce 0.55s ease-in-out infinite; }
+.mascot-avatar.mascot-anim-spin img { animation: mascot-spin 0.85s ease-in-out infinite; }
+.mascot-avatar.mascot-anim-dance img { animation: mascot-dance 0.5s ease-in-out infinite; }
+.mascot-avatar.mascot-anim-flip img { animation: mascot-flip 1.05s ease-in-out infinite; }
+
+/* Dozing: he visibly breathes slower when you haven't studied in a while. */
+.mascot-avatar.mascot-sleepy { position: relative; }
+.mascot-avatar.mascot-sleepy img { animation: mascot-bob 4.6s ease-in-out infinite; }
+
+/* Floating "z z Z" while Nibbles sleeps. */
+.mascot-zzz {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.mascot-zzz span {
+  position: absolute;
+  font-weight: 900;
+  color: #7c9cd8;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8);
+  opacity: 0;
+  animation: mascot-zzz-float 2.7s ease-out infinite;
+}
+.mascot-zzz span:nth-child(1) { font-size: 12px; top: 16px; right: 0px; animation-delay: 0s; }
+.mascot-zzz span:nth-child(2) { font-size: 16px; top: 2px; right: 12px; animation-delay: 0.5s; }
+.mascot-zzz span:nth-child(3) { font-size: 21px; top: -16px; right: 26px; animation-delay: 1s; }
+
+/* ⭐ burst particles for 90%+ finishes. */
+.mascot-burst {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+.mascot-burst span {
+  position: absolute;
+  bottom: 78px;
+  opacity: 0;
+  animation: mascot-burst-fly 1.7s ease-out infinite;
+}
 
 .mascot-bubble {
   pointer-events: auto;
@@ -1415,6 +1454,30 @@ body {
 @keyframes mascot-caret-blink {
   0%, 60% { opacity: 1; }
   61%, 100% { opacity: 0; }
+}
+@keyframes mascot-spin {
+  0% { transform: rotate(0deg) scale(1); }
+  50% { transform: rotate(180deg) scale(1.08); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+@keyframes mascot-dance {
+  0%, 100% { transform: rotate(-8deg) translateY(0); }
+  50% { transform: rotate(8deg) translateY(-6px); }
+}
+@keyframes mascot-flip {
+  0% { transform: scaleX(1); }
+  50% { transform: scaleX(-1) translateY(-4px); }
+  100% { transform: scaleX(1); }
+}
+@keyframes mascot-zzz-float {
+  0% { opacity: 0; transform: translateY(8px) scale(0.7); }
+  25% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-16px) scale(1.1); }
+}
+@keyframes mascot-burst-fly {
+  0% { transform: translateY(0) translateX(0) scale(0.5) rotate(0deg); opacity: 0; }
+  15% { opacity: 1; }
+  100% { transform: translateY(-150px) translateX(-8px) scale(1.15) rotate(30deg); opacity: 0; }
 }
 
 /* Respect users who prefer less motion. */

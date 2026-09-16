@@ -14,8 +14,17 @@ import {
 
    All of Nibbles' lines live in the "SCRIPT" section below — edit the
    wording there to give him your own personality. The poses are plain
-   PNGs in public/hamster/ (idle / waving / pointing / celebrating); swap
-   those files to redesign the character.
+   PNGs in public/hamster/ (idle / waving / pointing / celebrating /
+   sleeping / sad); swap those files to redesign the character.
+
+   What he notices:
+   • login            → "Hello, <name>!" tour for new users, or "Welcome
+                        back, <name>!" for returning users
+   • finishing a deck → a celebration unique to that mode (bounce / spin /
+                        dance / card-flip), a ⭐ burst for 90%+ scores, or a
+                        gentle pep talk for rough rounds
+   • not studying for a few days → he dozes off right on the screen (Zzz…)
+   • losing a streak  → a tearful little speech and a pep talk
    ════════════════════════════════════════════════════════════════════════ */
 
 // ─── SCRIPT (customize Nibbles' lines here) ───────────────────────────────
@@ -58,44 +67,113 @@ const WELCOME_BACK: string[] = [
   "Hi again, {first}! 🐹 A few minutes of reviewing a day keeps the forgetting away!",
 ];
 
-/** What Nibbles suggests next after you finish answering a deck. */
+/**
+ * Every study-mode finish gets its OWN celebration animation, so it never
+ * feels the same twice: flips for Study, spins for Exam, a dance for
+ * Identification, hops for Enumeration & Review. 90%+ gets a ⭐ burst,
+ * and a rough round gets a pep talk instead of confetti.
+ */
+const FINISH_ANIM: Record<string, CelebrateAnim> = {
+  study: "flip",
+  exam: "spin",
+  identify: "dance",
+  enumerate: "bounce",
+  review: "bounce",
+};
+
 function completionLines(ev: MascotEvent, first: string): Step {
   switch (ev.type) {
-    case "study-done":
+    case "study-done": {
+      const anim = FINISH_ANIM.study;
+      if (ev.knownPct >= 90) {
+        return {
+          mood: "celebrate",
+          anim,
+          burst: true,
+          text: `AMAZING, ${first}! You knew ${ev.knownPct}% of the deck — you own Study Mode 🎉 Now move to another mode: try Exam Mode, 4 choices and instant score!`,
+        };
+      }
+      if (ev.knownPct >= 50) {
+        return {
+          mood: "celebrate",
+          anim,
+          text: `Great job, ${first}! You finished Study Mode with ${ev.knownPct}% known 🎉 Now move to another study mode — try Exam Mode!`,
+        };
+      }
       return {
-        mood: "celebrate",
-        text:
-          ev.knownPct >= 80
-            ? `Great job, ${first}! You finished Study Mode and knew ${ev.knownPct}% of the cards 🎉 Now move to another study mode — try Exam Mode: 4 choices, instant score!`
-            : `Nice work, ${first}! You went through the whole deck 🎉 Now move to another study mode — try Exam Mode, or review the missed cards once more!`,
+        mood: "point",
+        text: `Phew — a full round done, ${first}! ${ev.knownPct}% known this time, and that's okay 💪 Let's review the missed cards once more, then conquer Exam Mode together!`,
       };
+    }
     case "scored-done": {
-      const pctPart = ev.pct >= 50 ? `${ev.pct}% — amazing!` : `${ev.pct}% — practice makes perfect!`;
+      const anim = FINISH_ANIM[ev.mode] ?? "bounce";
+      const modeName =
+        ev.mode === "exam" ? "Exam" : ev.mode === "identify" ? "Identification" : "Enumeration";
       const nextLine =
         ev.mode === "exam"
           ? "Now move to another study mode: try Identification and type the answers from memory!"
           : ev.mode === "identify"
             ? "Now move to another study mode: try Enumeration — list every item from memory!"
             : "Now move to another study mode: give Spaced Review a go — it resurfaces cards right before you forget them!";
+      if (ev.pct >= 90) {
+        return {
+          mood: "celebrate",
+          anim,
+          burst: true,
+          text: `WOW, ${first}! ${ev.pct}% on ${modeName} — superstar! 🎉⭐ ${nextLine}`,
+        };
+      }
+      if (ev.pct >= 50) {
+        return {
+          mood: "celebrate",
+          anim,
+          text: `You did it, ${first}! ${ev.pct}% on ${modeName} 🎉 ${nextLine}`,
+        };
+      }
       return {
-        mood: "celebrate",
-        text: `You did it, ${first}! ${pctPart} 🎉 ${nextLine}`,
+        mood: "point",
+        text: `Tough round, ${first} — ${ev.pct}% this time. Every miss teaches you something! 🧠 Study the missed cards below, then come back and smash it!`,
       };
     }
     case "review-done":
+      if (ev.pct >= 70) {
+        return {
+          mood: "celebrate",
+          anim: FINISH_ANIM.review,
+          burst: ev.pct >= 90,
+          text: `Review round complete — ${ev.pct}% recalled! 🎉 Incredible memory, ${first}! Come back tomorrow to keep your streak going!`,
+        };
+      }
       return {
         mood: "celebrate",
-        text:
-          ev.pct >= 70
-            ? `Review round complete — ${ev.pct}% recalled! 🎉 Incredible memory, ${first}! Come back tomorrow to keep your streak going!`
-            : `Review round done! 🎉 The tricky ones will come back sooner — that's the secret plan working. See you tomorrow, ${first}!`,
+        anim: FINISH_ANIM.review,
+        text: `Review round done! 🎉 The tricky ones will come back sooner — that's the secret plan working. See you tomorrow, ${first}!`,
       };
     default:
       return { mood: "idle", text: "" };
   }
 }
 
-/** Random tips when you poke Nibbles. */
+/** Inactivity: Nibbles literally falls asleep on screen. */
+function sleepyStep(first: string, days: number | null): Step {
+  return {
+    mood: "sleepy",
+    text:
+      days === null
+        ? `Hiii ${first}… the flashcards are still waiting for our very first round 😴 Wake me up with one tiny study session?`
+        : `Yaaawn… we haven't studied in ${days} day${days === 1 ? "" : "s"}, ${first} 😴 My brain is full of cobwebs — one quick round to wake us up?`,
+  };
+}
+
+/** A lost streak: teary speech, then motivation. */
+function sadStep(first: string, lostStreak: number): Step {
+  return {
+    mood: "sad",
+    text: `Oh no, ${first}… our ${lostStreak}-day streak slipped away 😢 It's okay — even champions need rest days! One tiny round and we start a brand-new streak?`,
+  };
+}
+
+/** Random tips when you poke Nibbles while he's awake. */
 const TAP_TIPS: Step[] = [
   { mood: "point", text: "Psst — in Exam Mode you can press 1–4 on the keyboard to answer super fast! ⚡" },
   { mood: "point", text: "Warm up in Study Mode first, then test yourself in Exam Mode. That's how champions train! 💪" },
@@ -105,11 +183,97 @@ const TAP_TIPS: Step[] = [
   { mood: "idle", text: "Squeak! 🐹 (That means: you're doing great.)" },
 ];
 
+/** What he mumbles when you poke him awake while he's dozing. */
+const WAKE_LINES: Step[] = [
+  { mood: "wave", text: "Yaaawn… I'm up, I'm up! 😴✨ One tiny round and I'll be wide awake — ready when you are!" },
+  { mood: "wave", text: "Huh?! I wasn't sleeping! 🐹 …okay, maybe a little. Let's do a quick round together?" },
+];
+
+// ─── Habit tracking helpers ───────────────────────────────────────────────
+
+type CelebrateAnim = "bounce" | "spin" | "dance" | "flip";
+
+/** What the server knows about the account's study rhythm (/api/stats). */
+interface HabitData {
+  streak: number;
+  lastStudiedAt: string | null;
+  totalAnswers: number;
+}
+
+type HabitMoment = { kind: "sleepy"; days: number | null } | { kind: "sad"; lostStreak: number };
+
+/** Per-account snapshot of the streak we saw last visit (mouth of truth for "missed a streak"). */
+interface HabitSnapshot {
+  streak: number;
+  at: string;
+}
+
+const habitKey = (id: string) => `quiztime-mascot-habit:${id}`;
+
+async function loadHabitData(): Promise<HabitData | null> {
+  try {
+    const res = await fetch("/api/stats");
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      streak: data?.overall?.streak ?? 0,
+      lastStudiedAt: data?.overall?.lastStudiedAt ?? null,
+      totalAnswers: data?.overall?.totalAnswers ?? 0,
+    };
+  } catch {
+    return null; // offline — Nibbles just skips the habit check
+  }
+}
+
+/**
+ * Decide if this visit deserves a habit moment. A streak only counts as
+ * *missed* when the last study day was ≥2 days ago (studied yesterday → the
+ * streak is still alive today, so no false tears). Sleepiness kicks in
+ * after 3 inactive days, or when the account has literally never studied.
+ */
+function decideHabitMoment(habit: HabitData, snap: HabitSnapshot | null): HabitMoment | null {
+  const daysSince = habit.lastStudiedAt
+    ? (Date.now() - Date.parse(habit.lastStudiedAt)) / 86_400_000
+    : null;
+
+  if (habit.streak === 0 && snap && snap.streak >= 2 && daysSince !== null && daysSince >= 2) {
+    return { kind: "sad", lostStreak: snap.streak };
+  }
+  if (daysSince === null) {
+    return habit.totalAnswers === 0 ? { kind: "sleepy", days: null } : null;
+  }
+  if (daysSince >= 3) return { kind: "sleepy", days: Math.floor(daysSince) };
+  return null;
+}
+
+function readHabitSnapshot(id: string): HabitSnapshot | null {
+  try {
+    const raw = window.localStorage.getItem(habitKey(id));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as HabitSnapshot;
+    return typeof parsed?.streak === "number" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeHabitSnapshot(id: string, snapshot: HabitSnapshot) {
+  try {
+    window.localStorage.setItem(habitKey(id), JSON.stringify(snapshot));
+  } catch {
+    // Storage blocked — Nibbles just has a shorter memory.
+  }
+}
+
 // ─── Little state machine ─────────────────────────────────────────────────
 
 interface Step {
   text: string;
   mood: MascotMood;
+  /** Celebration animation to loop while this bubble is up. */
+  anim?: CelebrateAnim;
+  /** ⭐ burst particles for 90%+ finishes. */
+  burst?: boolean;
 }
 
 interface BubbleState {
@@ -126,20 +290,31 @@ const onboardKey = (id: string) => `quiztime-mascot-onboarded:${id}`;
 const greetKey = (id: string) => `quiztime-mascot-greeted:${id}`;
 
 const AUTO_DISMISS_MS = 9000;
+const CHAIN_DELAY_MS = 900;
 const CHARS_PER_TICK = 2;
 const TICK_MS = 32;
 
 export function MascotHost({
   userName,
   userId,
+  demoHabit,
 }: {
   userName?: string | null;
   userId?: string | null;
+  /** Playground only (/hamster-preview): force a habit moment, skip /api/stats. */
+  demoHabit?: "sleepy" | "sad" | null;
 }) {
   const [bubble, setBubble] = useState<BubbleState | null>(null);
   const [shown, setShown] = useState(0);
+  /** Ambient pose between bubbles — turns sleepy when you've been away. */
+  const [ambient, setAmbient] = useState<"idle" | "sleepy">("idle");
+  /** Synchronous "is a bubble on screen" check for the async habit chain. */
+  const bubbleVisible = useRef(false);
   const keySeq = useRef(0);
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chainTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** A queued follow-up bubble (habit moments ride behind the greeting). */
+  const queuedStep = useRef<Step | null>(null);
   const reduceMotion = useRef(false);
 
   useEffect(() => {
@@ -154,10 +329,18 @@ export function MascotHost({
       dismissTimer.current = null;
     }
   };
+  const clearChainTimer = () => {
+    if (chainTimer.current) {
+      clearTimeout(chainTimer.current);
+      chainTimer.current = null;
+    }
+  };
 
   const show = useCallback((next: Omit<BubbleState, "key">) => {
     clearDismissTimer();
+    clearChainTimer();
     keySeq.current += 1;
+    bubbleVisible.current = true;
     setBubble({ ...next, key: keySeq.current });
   }, []);
 
@@ -166,34 +349,80 @@ export function MascotHost({
     [show]
   );
 
-  const close = useCallback(() => {
+  /**
+   * Close the bubble — and if something is queued behind it (the sleepy/sad
+   * moment after the welcome-back greeting), bring it up after a beat.
+   */
+  const closeBubble = useCallback(() => {
     clearDismissTimer();
+    bubbleVisible.current = false;
     setBubble(null);
-  }, []);
+    const queued = queuedStep.current;
+    if (queued) {
+      queuedStep.current = null;
+      clearChainTimer();
+      chainTimer.current = setTimeout(() => {
+        if (queued.mood === "sleepy") setAmbient("sleepy");
+        showSingle(queued);
+      }, CHAIN_DELAY_MS);
+    }
+  }, [showSingle]);
 
-  // ── Greeting on login (and the first-time tutorial) ─────────────────────
+  // ── Greeting on login (+ habit check: sleepy / missed-streak) ───────────
   useEffect(() => {
     const id = userId ?? "anon";
     const first = firstName(userName);
     let cancelled = false;
 
     const timer = setTimeout(() => {
-      if (cancelled) return;
-      try {
-        if (window.sessionStorage.getItem(greetKey(id))) return; // already greeted this visit
-        window.sessionStorage.setItem(greetKey(id), "1");
-        const onboarded = window.localStorage.getItem(onboardKey(id)) === "1";
+      void (async () => {
+        if (cancelled) return;
+        let greet;
+        let onboarded;
+        try {
+          if (window.sessionStorage.getItem(greetKey(id))) return; // already greeted this visit
+          window.sessionStorage.setItem(greetKey(id), "1");
+          greet = true;
+          onboarded = window.localStorage.getItem(onboardKey(id)) === "1";
+        } catch {
+          greet = true;
+          onboarded = true; // storage blocked → short-term Nibbles: greet, no tour
+        }
+        if (!greet || cancelled) return;
+
+        // New users: tutorial first, habit baseline set quietly in the background.
         if (onboarded) {
-          const line = WELCOME_BACK[Math.floor(Math.random() * WELCOME_BACK.length)]
-            .replace("{first}", first);
+          const line = WELCOME_BACK[Math.floor(Math.random() * WELCOME_BACK.length)].replace(
+            "{first}",
+            first
+          );
           showSingle({ mood: "wave", text: line });
         } else {
           show({ kind: "tutorial", steps: tutorialSteps(first), index: 0 });
         }
-      } catch {
-        // Storage blocked — still greet, just without memory.
-        showSingle({ mood: "wave", text: WELCOME_BACK[0].replace("{first}", first) });
-      }
+
+        // Habit moment: rides in after the greeting closes (see closeBubble).
+        const snap = readHabitSnapshot(id);
+        let moment: HabitMoment | null = null;
+        if (demoHabit) {
+          moment =
+            demoHabit === "sleepy"
+              ? { kind: "sleepy", days: 4 }
+              : { kind: "sad", lostStreak: Math.max(snap?.streak ?? 5, 2) };
+        } else {
+          const habit = await loadHabitData();
+          if (cancelled) return;
+          if (habit) {
+            if (onboarded) moment = decideHabitMoment(habit, snap);
+            writeHabitSnapshot(id, { streak: habit.streak, at: new Date().toISOString() });
+          }
+        }
+        if (cancelled || !moment) return;
+        queuedStep.current =
+          moment.kind === "sleepy" ? sleepyStep(first, moment.days) : sadStep(first, moment.lostStreak);
+        // If the greeting is somehow already gone, chain immediately.
+        if (!bubbleVisible.current) closeBubble();
+      })();
     }, 1200);
 
     return () => {
@@ -211,7 +440,10 @@ export function MascotHost({
         showSingle({ text: ev.text, mood: ev.mood ?? "idle" });
         return;
       }
-      // Tiny delay so the results screen lands a beat before Nibbles cheers.
+      // Finishing a run wakes him up, then he cheers a beat after the
+      // results screen lands.
+      setAmbient("idle");
+      queuedStep.current = null;
       setTimeout(() => showSingle(completionLines(ev, first)), 600);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -246,7 +478,7 @@ export function MascotHost({
   useEffect(() => {
     if (!bubble || bubble.kind !== "single" || !typingDone) return;
     clearDismissTimer();
-    dismissTimer.current = setTimeout(() => setBubble(null), AUTO_DISMISS_MS);
+    dismissTimer.current = setTimeout(() => closeBubble(), AUTO_DISMISS_MS);
     return clearDismissTimer;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bubble?.key, typingDone]);
@@ -258,14 +490,19 @@ export function MascotHost({
     } catch {
       // Non-fatal — Nibbles will just re-offer the tour next time.
     }
-    close();
-  }, [userId, close]);
+    closeBubble();
+  }, [userId, closeBubble]);
 
-  /** Poke Nibbles: close the bubble, or get a random tip. */
+  /** Poke Nibbles: dismiss the bubble, wake him up, or get a random tip. */
   const poke = () => {
     if (bubble) {
       if (bubble.kind === "tutorial") finishTutorial();
-      else close();
+      else closeBubble();
+      return;
+    }
+    if (ambient === "sleepy") {
+      setAmbient("idle");
+      showSingle(WAKE_LINES[Math.floor(Math.random() * WAKE_LINES.length)]);
       return;
     }
     showSingle(TAP_TIPS[Math.floor(Math.random() * TAP_TIPS.length)]);
@@ -277,18 +514,39 @@ export function MascotHost({
     setBubble({ ...bubble, index: bubble.index + 1 });
   };
 
-  const mood: MascotMood = active?.mood ?? "idle";
+  const mood: MascotMood = bubble && active ? active.mood : ambient;
+  const celebrating = Boolean(bubble && active?.mood === "celebrate");
+  const anim: CelebrateAnim = active?.anim ?? "bounce";
+  const dozing = !bubble && ambient === "sleepy";
   const isLastTutorialStep = bubble?.kind === "tutorial" && bubble.index >= bubble.steps.length - 1;
 
   return (
     <div className="mascot-wrap">
-      {/* Preload every pose so the first celebration has no image flicker. */}
+      {/* Preload every pose so a mood swap never flickers. */}
       <div style={{ display: "none" }} aria-hidden>
         {Object.values(MASCOT_IMAGES).map((src) => (
           // eslint-disable-next-line @next/next/no-img-element
           <img key={src} src={src} alt="" />
         ))}
       </div>
+
+      {/* ⭐ burst for 90%+ finishes */}
+      {bubble && active?.burst && (
+        <div className="mascot-burst" aria-hidden>
+          {["⭐", "✨", "🎉", "⭐", "✨", "🎊", "⭐"].map((piece, i) => (
+            <span
+              key={i}
+              style={{
+                left: `${-20 + ((i * 37) % 150)}px`,
+                animationDelay: `${(i * 0.23) % 1.4}s`,
+                fontSize: `${12 + ((i * 5) % 10)}px`,
+              }}
+            >
+              {piece}
+            </span>
+          ))}
+        </div>
+      )}
 
       {bubble && active && (
         <div
@@ -306,7 +564,7 @@ export function MascotHost({
             onClick={(e) => {
               e.stopPropagation();
               if (bubble.kind === "tutorial") finishTutorial();
-              else close();
+              else closeBubble();
             }}
             aria-label="Dismiss Nibbles"
           >
@@ -321,10 +579,7 @@ export function MascotHost({
           {bubble.kind === "tutorial" && typingDone && (
             <div className="mascot-actions">
               {!isLastTutorialStep && (
-                <button
-                  className="btn btn-ghost btn-sm mascot-skip"
-                  onClick={finishTutorial}
-                >
+                <button className="btn btn-ghost btn-sm mascot-skip" onClick={finishTutorial}>
                   Skip tour
                 </button>
               )}
@@ -338,13 +593,26 @@ export function MascotHost({
 
       <button
         type="button"
-        className={`mascot-avatar${mood === "celebrate" && bubble ? " mascot-excited" : ""}`}
+        className={[
+          "mascot-avatar",
+          celebrating ? `mascot-anim-${anim}` : "",
+          dozing ? "mascot-sleepy" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
         onClick={poke}
         aria-label="Nibbles the hamster, your study buddy"
         title="Nibbles"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={MASCOT_IMAGES[mood]} alt="" draggable={false} />
+        {dozing && (
+          <span className="mascot-zzz" aria-hidden>
+            <span>z</span>
+            <span>z</span>
+            <span>Z</span>
+          </span>
+        )}
       </button>
     </div>
   );

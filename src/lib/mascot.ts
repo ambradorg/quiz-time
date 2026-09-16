@@ -7,7 +7,7 @@
  * it is mounted and turns the event into a speech-bubble moment.
  */
 
-export type MascotMood = "idle" | "wave" | "point" | "celebrate";
+export type MascotMood = "idle" | "wave" | "point" | "celebrate" | "sleepy" | "sad";
 
 /** Pose artwork, one per mood (see public/hamster/). */
 export const MASCOT_IMAGES: Record<MascotMood, string> = {
@@ -15,6 +15,8 @@ export const MASCOT_IMAGES: Record<MascotMood, string> = {
   wave: "/hamster/hamster-wave.png",
   point: "/hamster/hamster-point.png",
   celebrate: "/hamster/hamster-celebrate.png",
+  sleepy: "/hamster/hamster-sleepy.png",
+  sad: "/hamster/hamster-sad.png",
 };
 
 /**
