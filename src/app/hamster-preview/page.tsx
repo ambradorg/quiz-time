@@ -16,6 +16,7 @@ export default function HamsterPreview() {
   const [mountKey, setMountKey] = useState(0);
   const [name, setName] = useState("Alex");
   const [demoHabit, setDemoHabit] = useState<DemoHabit>(null);
+  const [peek, setPeek] = useState(false);
 
   /** Reset the mascot's memory and remount him so the greeting re-runs. */
   const replayGreeting = (asNewUser: boolean, habit: DemoHabit = null) => {
@@ -43,14 +44,31 @@ export default function HamsterPreview() {
       run: () => replayGreeting(false, "sad"),
       hint: "greeting, then a tearful streak speech",
     },
-    { label: "📖 Study finished · 92%", run: () => mascotEvent({ type: "study-done", knownPct: 92 }), hint: "card-FLIP + ⭐ burst" },
+    { label: "📖 Study finished · 92%", run: () => mascotEvent({ type: "study-done", knownPct: 92 }), hint: "card-FLIP + seed nibble + ⭐ burst" },
     { label: "📖 Study finished · 40%", run: () => mascotEvent({ type: "study-done", knownPct: 40 }), hint: "gentle pep talk" },
-    { label: "📝 Exam · 96%", run: () => mascotEvent({ type: "scored-done", mode: "exam", pct: 96 }), hint: "SPIN + ⭐ burst" },
+    { label: "📝 Exam · 96%", run: () => mascotEvent({ type: "scored-done", mode: "exam", pct: 96 }), hint: "SPIN + seed nibble + ⭐ burst" },
     { label: "📝 Exam · 70%", run: () => mascotEvent({ type: "scored-done", mode: "exam", pct: 70 }), hint: "spin" },
     { label: "⌨️ Identification · 65%", run: () => mascotEvent({ type: "scored-done", mode: "identify", pct: 65 }), hint: "happy DANCE" },
-    { label: "🔢 Enumeration · 100%", run: () => mascotEvent({ type: "scored-done", mode: "enumerate", pct: 100 }), hint: "hops + ⭐ burst" },
+    { label: "🔢 Enumeration · 100%", run: () => mascotEvent({ type: "scored-done", mode: "enumerate", pct: 100 }), hint: "hops + seed nibble + ⭐ burst" },
     { label: "📉 Rough round · 35%", run: () => mascotEvent({ type: "scored-done", mode: "exam", pct: 35 }), hint: "encouragement, no confetti" },
     { label: "🧠 Review round · 80%", run: () => mascotEvent({ type: "review-done", pct: 80 }), hint: "hops" },
+    { label: "🌱 First run on a fresh deck", run: () => mascotEvent({ type: "first-run" }), hint: "wave / hop cheer for a brand-new deck" },
+    { label: "🔥 5-in-a-row streak", run: () => mascotEvent({ type: "streak", n: 5 }), hint: "mid-run hop cheer (3 / 5 / 10+ in the real app)" },
+    { label: "🤗 3 misses in a row", run: () => mascotEvent({ type: "struggling" }), hint: "gentle coach, no confetti" },
+    {
+      label: "🤔 AI generating flashcards",
+      run: () => mascotEvent({ type: "generating" }),
+      hint: "thinking pose + floating 💭 — fire any other moment to end it",
+    },
+    {
+      label: peek ? "🙈 Stop peeking" : "👀 Peek while answering",
+      run: () => {
+        const next = !peek;
+        setPeek(next);
+        mascotEvent({ type: "peek", active: next });
+      },
+      hint: "he tucks half behind the screen edge like he's watching you answer — then try a streak button",
+    },
     { label: "💬 Custom line", run: () => mascotSay("You can make Nibbles say anything, from anywhere in the app!", "point") },
   ];
 
@@ -59,8 +77,10 @@ export default function HamsterPreview() {
       <h1 style={{ fontSize: 20, fontWeight: 800, margin: "0 0 4px" }}>Nibbles 🐹 playground</h1>
       <p style={{ fontSize: 13.5, color: "var(--text-muted)", margin: "0 0 16px", lineHeight: 1.55 }}>
         This page previews every mascot moment without signing in. Tap a button and watch the
-        bottom-right corner — every study-mode finish has its own victory animation now, plus a
-        ⭐ burst for 90%+. Poke Nibbles while he dozes to wake him up.
+        bottom-right corner — every study-mode finish has its own victory animation, and 90%+
+        makes him nibble a sunflower seed under a ⭐ burst. He also cheers mid-run streaks,
+        coaches rough stretches, and thinks along while the AI generates cards. Poke him while
+        he dozes to wake him up.
       </p>
 
       <label style={{ display: "block", fontSize: 12, fontWeight: 800, color: "var(--text-muted)", marginBottom: 6 }}>
