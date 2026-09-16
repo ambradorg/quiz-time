@@ -1,0 +1,18 @@
+{
+  "name": "quiztime-concept-paper-tools",
+  "private": true,
+  "description": "Regenerates the QuizTime concept paper (.docx), the defense deck (.pptx) and its figures from QuizTime-Concept-Paper.md",
+  "scripts": {
+    "build": "npm run figures && npm run docx && npm run pptx",
+    "figures": "node diagrams.js && node prep-images.js",
+    "docx": "node build-docx.js",
+    "pptx": "node build-pptx.js",
+    "qa": "node qa-render.js"
+  },
+  "dependencies": {
+    "docx": "^9.5.1",
+    "jszip": "^3.10.1",
+    "pptxgenjs": "^4.0.1",
+    "sharp": "^0.34.4"
+  }
+}

@@ -706,6 +706,15 @@ npm run test:offline-e2e # offline round trip against a real server + database
 npm run test:e2e        # auth/stats e2e suite (minted JWTs, real HTTP)
 ```
 
+## Concept paper & presentation
+
+`docs/concept-paper/` holds the academic write-up for this project: the concept
+paper (`QuizTime-Concept-Paper.docx`, generated from its Markdown source), a
+15-slide defense deck with speaker notes (`QuizTime-Concept-Presentation.pptx`),
+the diagrams used in both (`figures/`), and the Node scripts that regenerate
+everything (`tools/`). See
+[docs/concept-paper/README.md](docs/concept-paper/README.md).
+
 ## Notes
 
 - **AI generation is sign-in-only** and rate-limited to 10 requests per 10
