@@ -38,6 +38,8 @@ import {
   sendOrQueueWrite,
 } from "@/lib/offline";
 import { useOfflineIdentity, useOnlineStatus, useOutbox } from "@/lib/use-offline";
+import { MascotHost } from "@/components/hamster-mascot";
+import { mascotEvent } from "@/lib/mascot";
 import {
   OfflineBadge,
   OfflineChip,
@@ -2777,6 +2779,15 @@ function ReviewSession({
     return () => window.removeEventListener("keydown", onKey);
   }, [flipped, finished, handleGrade]);
 
+  // 🐹 Nibbles celebrates the end of a review round.
+  useEffect(() => {
+    if (!finished) return;
+    const recalled = graded.filter((item) => item.grade !== "again").length;
+    const pct = graded.length > 0 ? Math.round((recalled / graded.length) * 100) : 0;
+    mascotEvent({ type: "review-done", pct });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finished]);
+
   const difficultyColor =
     { easy: "#10b981", medium: "#f59e0b", hard: "#f43f5e" }[card?.difficulty ?? "medium"] ?? "#6366f1";
 
@@ -3743,6 +3754,23 @@ function QuizPage({
           allCorrect: currentAnswer.isCorrect,
         }
       : null;
+
+  // 🐹 Nibbles cheers at the finish line — and nudges you to the next mode.
+  useEffect(() => {
+    if (!done || cards.length === 0) return;
+    const known = progress.filter((p) => p.isKnown).length;
+    mascotEvent({ type: "study-done", knownPct: Math.round((known / cards.length) * 100) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [done]);
+
+  useEffect(() => {
+    if (!examDone) return;
+    if (mode !== "exam" && mode !== "identify" && mode !== "enumerate") return;
+    const correct = answers.filter((a) => a.isCorrect).length;
+    const pct = answers.length ? Math.round((correct / answers.length) * 100) : 0;
+    mascotEvent({ type: "scored-done", mode, pct });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [examDone]);
 
   return (
     <div style={{ padding: "16px" }}>
@@ -5871,8 +5899,18 @@ export default function App() {
   }, []);
 
   // ── Draft deck (generated but not saved yet) ──────────────────────────────
-  // Lazy initializer: restored from localStorage on first client render.
-  const [draft, setDraft] = useState<PendingDeck | null>(() => loadDraft());
+  // Hydration-safe: reading localStorage during the first client render would
+  // differ from the server's HTML ("hydration failed" warnings). Restored one
+  // frame after mount instead — the same pattern IOSInstallPrompt documents:
+  // first client render matches the server, then the banner fades in.
+  const [draft, setDraft] = useState<PendingDeck | null>(null);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const restored = loadDraft();
+      if (restored) setDraft(restored);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
   const handleCardsReady = (cards: Flashcard[], title: string, summary: string, sourceType: string) => {
     setPendingCards(cards);
@@ -6324,6 +6362,12 @@ export default function App() {
       </nav>
 
       <ToastHost />
+      {/* Nibbles 🐹 — floating study buddy (greets on login, tours first-timers,
+          cheers when a deck run finishes). */}
+      <MascotHost
+        userName={user?.name ?? null}
+        userId={user?.id != null ? String(user.id) : null}
+      />
     </div>
   );
 }
