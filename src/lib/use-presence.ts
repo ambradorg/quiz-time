@@ -32,8 +32,16 @@ export interface PresenceRoster {
   users: PresenceEntry[];
 }
 
-/** Why the roster couldn't be read — the UI turns these into copy. */
-export type PresenceError = "forbidden" | "unreachable" | null;
+/**
+ * Why the roster couldn't be read — the UI turns these into copy.
+ *
+ *   forbidden    401/403: not the owner (or signed out) — the bar hides itself
+ *   server       the server answered, but with an error (5xx / bad JSON) —
+ *                usually the database: unreachable, or the `user_presence`
+ *                migration not applied yet
+ *   unreachable  no answer at all: offline, or the server is down
+ */
+export type PresenceError = "forbidden" | "server" | "unreachable" | null;
 
 const ROSTER_URL = "/api/presence";
 
@@ -49,9 +57,15 @@ async function fetchPresenceRoster(): Promise<PresenceRoster | PresenceError> {
       // 403 = the session's email isn't OWNER_EMAIL (env changed since the page
       // was rendered, or a stale client flag). 401 lands here too when the
       // session expired — "forbidden" hides the panel either way.
-      return res.status === 401 || res.status === 403 ? "forbidden" : "unreachable";
+      if (res.status === 401 || res.status === 403) return "forbidden";
+      // The server is up — it's the route (almost always the database) that
+      // failed. Worth telling apart from "no connection", because the fix is
+      // different (check DATABASE_URL / run the migration, not the Wi-Fi).
+      return "server";
     }
-    return (await res.json()) as PresenceRoster;
+    const data = (await res.json().catch(() => null)) as PresenceRoster | null;
+    if (!data || !Array.isArray(data.users)) return "server";
+    return data;
   } catch {
     // Offline, or the server is unreachable.
     return "unreachable";
