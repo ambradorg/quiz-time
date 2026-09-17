@@ -519,6 +519,40 @@ users, without disclosing who the owner is).
 | `POST /api/presence` | Heartbeat from any signed-in user: `{ activity?, device? }` → `{ ok: true, online }`, where `online` is the live count for the owner and `null` for everybody else. Upserts the caller's `user_presence` row. |
 | `GET /api/presence` | The roster — **owner only**: `{ online, total, windowSeconds, users: [{ id, name, email, image, isOwner, online, lastSeenSecondsAgo, activity, device }] }`. Every account is listed (LEFT JOIN), online first, then most recent; `lastSeenSecondsAgo` is `null` for accounts that never checked in. |
 
+### When the database isn't ready
+
+The roster used to answer *every* server-side failure with one guess —
+"usually the database: check `DATABASE_URL` and that the presence migration
+has been applied" — which is the wrong advice for an unreachable database, a
+rejected password or a missing `AUTH_SECRET`, and useless to an owner who can't
+run `npm run db:migrate` because the app is hosted somewhere else. So now:
+
+- **The app creates its own table.** `drizzle/0005_presence.sql` is idempotent,
+  so when a query fails with *relation "user_presence" does not exist* the
+  route runs those same statements (`src/lib/presence-schema.ts`) and retries
+  the query once. The feature switches itself on instead of dead-ending on a
+  support ticket. Only that one table is ever touched, and a failed attempt
+  backs off for 60 s so a role without `CREATE` isn't hammered by every
+  heartbeat.
+- **Every failure says what it is.** Failures return
+  `{ "error": "human sentence", "reason": "…" }` with a 503 (500 for an
+  unclassified one), and the panel turns `reason` into the matching advice
+  (`src/lib/db-errors.ts` classifies, `src/lib/use-presence.ts` maps):
+
+  | `reason` | What it means | The panel says |
+  | --- | --- | --- |
+  | `missing_table` | `user_presence` is gone and couldn't be created | run the migration / paste the SQL |
+  | `permission` | the database refused the `CREATE` | ask the database owner to run the SQL, or grant `CREATE` |
+  | `unreachable` | the server can't reach the database at all | `DATABASE_URL` points at a host that is down |
+  | `credentials` | the database rejected the password | the credentials in `DATABASE_URL` changed |
+  | `auth` | Auth.js itself failed (`AUTH_SECRET`) | a server setting, not a database one |
+  | `unknown` | anything else | "something went wrong server-side" — the log has it |
+
+  The raw Postgres error never leaves the server: only the short `reason`
+  string does, and the detail is in the server log.
+- A failed poll never blanks a list that already loaded — the panel keeps the
+  previous roster and explains that it may be out of date.
+
 ### Good to know
 
 - Presence is a *hint*, not a promise: someone who closes the tab shows as
@@ -533,8 +567,11 @@ users, without disclosing who the owner is).
 
 ### Production migration (Supabase)
 
-Migration `drizzle/0005_presence.sql` is idempotent. Paste this into the
-Supabase SQL editor and run it once:
+Migration `drizzle/0005_presence.sql` is idempotent — and the app now applies
+it itself the first time it finds the table missing (see [When the database
+isn't ready](#when-the-database-isnt-ready)), so pasting it by hand is
+optional. Do it anyway if the database role the app uses has no `CREATE`
+rights: paste this into the Supabase SQL editor and run it once:
 
 ```sql
 CREATE TABLE IF NOT EXISTS "user_presence" (
@@ -807,6 +844,7 @@ npm run test:openrouter # OpenRouter adapter tests (fake endpoint)
 npm run test:scan       # /api/scan failover tests (real SDK, fake endpoints)
 npm run test:srs        # spaced-repetition scheduler tests (no db, no network)
 npm run test:presence   # "who's online" rules: owner email, window, sanitisers
+npm run test:db-errors  # database-failure taxonomy + self-heal DDL (no db needed)
 npm run test:offline    # offline core + browser glue + service-worker contract
 npm run test:offline-e2e # offline round trip against a real server + database
 npm run test:e2e        # auth/stats e2e suite (minted JWTs, real HTTP)

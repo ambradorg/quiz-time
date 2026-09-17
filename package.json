@@ -16,6 +16,7 @@
     "test:srs": "tsx --test scripts/srs.test.mjs",
     "test:offline": "tsx --test scripts/offline.test.mjs scripts/offline-client.test.mjs",
     "test:presence": "tsx --test scripts/presence.test.mjs",
+    "test:db-errors": "tsx --test scripts/db-errors.test.mjs",
     "test:presence-e2e": "tsx scripts/presence-e2e.mjs",
     "test:offline-e2e": "tsx --test scripts/offline-e2e.test.mjs",
     "test:e2e": "tsx scripts/auth-e2e.mjs",

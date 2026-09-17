@@ -35,13 +35,56 @@ export interface PresenceRoster {
 /**
  * Why the roster couldn't be read — the UI turns these into copy.
  *
- *   forbidden    401/403: not the owner (or signed out) — the bar hides itself
- *   server       the server answered, but with an error (5xx / bad JSON) —
- *                usually the database: unreachable, or the `user_presence`
- *                migration not applied yet
- *   unreachable  no answer at all: offline, or the server is down
+ *   forbidden      401/403: not the owner (or signed out) — the bar hides itself
+ *   missing_table  the server reached its database but `user_presence` isn't
+ *                  there, and it couldn't create the table itself
+ *   permission     it tried to create the table and the database said no —
+ *                  the role in DATABASE_URL lacks CREATE rights
+ *   database       the server answered, but it can't use its database:
+ *                  unreachable, wrong credentials, or a query that failed
+ *   auth           the server's own sign-in isn't configured (AUTH_SECRET) —
+ *                  nothing to do with the database, despite the panel living
+ *                  next to a database error
+ *   server         the server answered with something we don't recognise
+ *   unreachable    no answer at all: offline, or the server is down
+ *
+ * The distinction is the point: "check DATABASE_URL" is the wrong advice for
+ * four of these six, and the panel used to give it for all of them.
  */
-export type PresenceError = "forbidden" | "server" | "unreachable" | null;
+export type PresenceError =
+  | "forbidden"
+  | "missing_table"
+  | "permission"
+  | "database"
+  | "auth"
+  | "server"
+  | "unreachable"
+  | null;
+
+/**
+ * The API's `reason` values (src/lib/db-errors.ts) → the error the panel has
+ * copy for. Unknown reasons fall back to `server` rather than to a confident
+ * guess about databases.
+ */
+const ERROR_FOR_REASON: Record<string, PresenceError> = {
+  missing_table: "missing_table",
+  permission: "permission",
+  unreachable: "database",
+  credentials: "database",
+  auth: "auth",
+  unknown: "server",
+};
+
+/**
+ * Map the API's `reason` onto the error the panel has copy for. Exported (and
+ * kept free of React) so scripts/db-errors.test.mjs can prove every reason the
+ * server can send has an answer on screen — an unmapped reason would quietly
+ * degrade to "something went wrong server-side".
+ */
+export function presenceErrorForReason(reason: unknown): PresenceError {
+  if (typeof reason !== "string") return "server";
+  return ERROR_FOR_REASON[reason] ?? "server";
+}
 
 const ROSTER_URL = "/api/presence";
 
@@ -58,10 +101,11 @@ async function fetchPresenceRoster(): Promise<PresenceRoster | PresenceError> {
       // was rendered, or a stale client flag). 401 lands here too when the
       // session expired — "forbidden" hides the panel either way.
       if (res.status === 401 || res.status === 403) return "forbidden";
-      // The server is up — it's the route (almost always the database) that
-      // failed. Worth telling apart from "no connection", because the fix is
-      // different (check DATABASE_URL / run the migration, not the Wi-Fi).
-      return "server";
+      // The server is up — it just couldn't answer, and it says why. Reading
+      // that `reason` is what lets the panel stop blaming the database for
+      // problems the database doesn't have (a missing AUTH_SECRET, say).
+      const body = (await res.json().catch(() => null)) as { reason?: unknown } | null;
+      return presenceErrorForReason(body?.reason);
     }
     const data = (await res.json().catch(() => null)) as PresenceRoster | null;
     if (!data || !Array.isArray(data.users)) return "server";

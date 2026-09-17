@@ -19,7 +19,18 @@
  * "4 min ago", "never seen", never "currently studying for 12 minutes".
  */
 import { useEffect, useState } from "react";
-import { AlertTriangle, ChevronRight, RefreshCw, Users, WifiOff, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronRight,
+  Database,
+  DatabaseZap,
+  KeyRound,
+  RefreshCw,
+  ShieldAlert,
+  Users,
+  WifiOff,
+  X,
+} from "lucide-react";
 import {
   ONLINE_WINDOW_SECONDS,
   displayName,
@@ -231,34 +242,13 @@ export function PresencePanel({
           </span>
         </p>
 
-        {error === "unreachable" && (
-          <div className="presence-empty">
-            <WifiOff size={18} aria-hidden />
-            <p style={{ margin: 0, fontSize: 12.5, fontWeight: 700 }}>
-              Can&apos;t reach the server
-            </p>
-            <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>
-              {roster
-                ? "Who's online needs a connection — the list below may be out of date."
-                : "Who's online needs a connection. Check yours, then try again."}
-            </p>
-            {!roster && <RetryButton onClick={handleRefresh} busy={refreshing} />}
-          </div>
-        )}
-
-        {error === "server" && (
-          <div className="presence-empty">
-            <AlertTriangle size={18} aria-hidden />
-            <p style={{ margin: 0, fontSize: 12.5, fontWeight: 700 }}>
-              The server couldn&apos;t load the list
-            </p>
-            <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>
-              {roster
-                ? "Showing the last list that loaded — it may be out of date."
-                : "Usually the database: check DATABASE_URL and that the presence migration (npm run db:migrate) has been applied."}
-            </p>
-            {!roster && <RetryButton onClick={handleRefresh} busy={refreshing} />}
-          </div>
+        {error && error !== "forbidden" && (
+          <PresenceErrorState
+            error={error}
+            hasRoster={Boolean(roster)}
+            onRetry={handleRefresh}
+            busy={refreshing}
+          />
         )}
 
         {/* Only a *successful* answer gets the rows (and the "No accounts yet"
@@ -276,6 +266,94 @@ export function PresencePanel({
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * Copy for every way the roster can fail, keyed by the error the API reported
+ * (src/lib/use-presence.ts → PresenceError).
+ *
+ * `fresh` is what the panel says when there is nothing on screen yet; `stale`
+ * when an older list is still there, because a failed poll must never blank a
+ * list that loaded fine a moment ago. The sentences name the *actual* setting
+ * to check: before this, every server-side failure said "usually the database:
+ * check DATABASE_URL and run npm run db:migrate", which is wrong for a missing
+ * AUTH_SECRET, for a database that is merely unreachable, and for a role that
+ * isn't allowed to create the table.
+ */
+const ERROR_COPY: Record<
+  Exclude<PresenceError, "forbidden" | null>,
+  { icon: typeof WifiOff; title: string; fresh: string; stale: string }
+> = {
+  unreachable: {
+    icon: WifiOff,
+    title: "Can't reach the server",
+    fresh: "Who's online needs a connection. Check yours, then try again.",
+    stale: "Who's online needs a connection — the list below may be out of date.",
+  },
+  database: {
+    icon: Database,
+    title: "The server can't reach its database",
+    fresh:
+      "The app is running, but it can't talk to the database behind it — DATABASE_URL may point at a host that is down, or the password may have changed. Your own connection is fine.",
+    stale:
+      "The server lost its database connection — showing the last list that loaded.",
+  },
+  missing_table: {
+    icon: DatabaseZap,
+    title: "The who's-online table isn't set up yet",
+    fresh:
+      "The database has no user_presence table, and the server couldn't create one. Run npm run db:migrate, or paste drizzle/0005_presence.sql into your database's SQL editor, then try again.",
+    stale:
+      "Showing the last list that loaded — it can't refresh until the user_presence table exists.",
+  },
+  permission: {
+    icon: ShieldAlert,
+    title: "The database won't let the app create its table",
+    fresh:
+      "The server tried to create user_presence and was refused: the database user in DATABASE_URL has no CREATE rights. Ask whoever owns the database to run drizzle/0005_presence.sql once — or to grant that role CREATE on the schema.",
+    stale:
+      "Showing the last list that loaded — it won't refresh until the table can be created.",
+  },
+  auth: {
+    icon: KeyRound,
+    title: "Sign-in isn't configured on the server",
+    fresh:
+      "The server couldn't check who you are before reaching the database — AUTH_SECRET is missing or has changed. That's a server setting, not a database one, and not something this panel can fix.",
+    stale: "Showing the last list that loaded.",
+  },
+  server: {
+    icon: AlertTriangle,
+    title: "The server couldn't load the list",
+    fresh: "Something went wrong server-side — the server log has the detail. Try again in a moment.",
+    stale: "Showing the last list that loaded — it may be out of date.",
+  },
+};
+
+/** The panel's error block: the right sentence for the right failure. */
+function PresenceErrorState({
+  error,
+  hasRoster,
+  onRetry,
+  busy,
+}: {
+  error: Exclude<PresenceError, "forbidden" | null>;
+  hasRoster: boolean;
+  onRetry: () => Promise<void> | void;
+  busy: boolean;
+}) {
+  const copy = ERROR_COPY[error] ?? ERROR_COPY.server;
+  const Icon = copy.icon;
+
+  return (
+    <div className="presence-empty">
+      <Icon size={18} aria-hidden />
+      <p style={{ margin: 0, fontSize: 12.5, fontWeight: 700 }}>{copy.title}</p>
+      <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>
+        {hasRoster ? copy.stale : copy.fresh}
+      </p>
+      {!hasRoster && <RetryButton onClick={onRetry} busy={busy} />}
+    </div>
   );
 }
 
