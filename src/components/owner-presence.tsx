@@ -19,7 +19,7 @@
  * "4 min ago", "never seen", never "currently studying for 12 minutes".
  */
 import { useEffect, useState } from "react";
-import { ChevronRight, RefreshCw, Users, WifiOff, X } from "lucide-react";
+import { AlertTriangle, ChevronRight, RefreshCw, Users, WifiOff, X } from "lucide-react";
 import {
   ONLINE_WINDOW_SECONDS,
   displayName,
@@ -224,7 +224,7 @@ export function PresencePanel({
             color: roster && roster.online > 0 ? "#0f766e" : "var(--text-muted)",
           }}
         >
-          {roster ? `${formatOnlineCount(roster.online)} now` : loading ? "Checking…" : "—"}
+          {roster ? `${formatOnlineCount(roster.online)} now` : loading ? "Checking…" : "Unavailable"}
           <span style={{ fontWeight: 600, color: "var(--text-muted)" }}>
             {" "}
             · online = seen in the last {windowLabel}s
@@ -238,12 +238,35 @@ export function PresencePanel({
               Can&apos;t reach the server
             </p>
             <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>
-              Who&apos;s online needs a connection — the list below may be out of date.
+              {roster
+                ? "Who's online needs a connection — the list below may be out of date."
+                : "Who's online needs a connection. Check yours, then try again."}
             </p>
+            {!roster && <RetryButton onClick={handleRefresh} busy={refreshing} />}
           </div>
         )}
 
-        <PresenceList users={users} ownerId={users.find((entry) => entry.isOwner)?.id ?? null} />
+        {error === "server" && (
+          <div className="presence-empty">
+            <AlertTriangle size={18} aria-hidden />
+            <p style={{ margin: 0, fontSize: 12.5, fontWeight: 700 }}>
+              The server couldn&apos;t load the list
+            </p>
+            <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>
+              {roster
+                ? "Showing the last list that loaded — it may be out of date."
+                : "Usually the database: check DATABASE_URL and that the presence migration (npm run db:migrate) has been applied."}
+            </p>
+            {!roster && <RetryButton onClick={handleRefresh} busy={refreshing} />}
+          </div>
+        )}
+
+        {/* Only a *successful* answer gets the rows (and the "No accounts yet"
+            empty state) — a failed first load must not masquerade as "nobody
+            has signed up". */}
+        {roster && (
+          <PresenceList users={users} ownerId={users.find((entry) => entry.isOwner)?.id ?? null} />
+        )}
 
         {!roster && !error && (
           <div className="presence-empty">
@@ -253,6 +276,26 @@ export function PresencePanel({
         )}
       </div>
     </>
+  );
+}
+
+/** "Try again" for the error states shown before any roster has loaded. */
+function RetryButton({ onClick, busy }: { onClick: () => Promise<void> | void; busy: boolean }) {
+  return (
+    <button
+      type="button"
+      className="btn btn-ghost btn-sm"
+      onClick={() => void onClick()}
+      disabled={busy}
+      style={{ marginTop: 8 }}
+    >
+      <RefreshCw
+        size={14}
+        aria-hidden
+        style={busy ? { animation: "spin 1s linear infinite" } : undefined}
+      />
+      {busy ? "Trying…" : "Try again"}
+    </button>
   );
 }
 
