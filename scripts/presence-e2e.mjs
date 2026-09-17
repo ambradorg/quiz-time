@@ -17,7 +17,10 @@
  *   - what the client sends is a *label*: activity/device are sanitised, and a
  *     client-supplied timestamp is ignored (ages come from the database clock),
  *   - one row per user (the heartbeat is an upsert), and deleting a user
- *     cascades their presence row away.
+ *     cascades their presence row away,
+ *   - a database that never got the migration: the server creates the
+ *     (idempotent) table itself and the roster still loads, instead of telling
+ *     the owner to go and run `npm run db:migrate`.
  *
  * Usage (server on $BASE_URL or spawned automatically):
  *   OWNER_EMAIL=you@example.com npm run test:presence-e2e
@@ -403,3 +406,77 @@ describe("presence: the owner's roster", () => {
     assert.equal(await rowFor(NEWCOMER), null, "the presence row outlived its user");
   });
 });
+
+describe("presence: a database that never got the migration", () => {
+  /**
+   * The failure this suite used to end with: the table is missing, the roster
+   * answers 500, and the panel tells the owner to "check DATABASE_URL and run
+   * npm run db:migrate" — advice they usually can't follow, because the app
+   * runs on a host and the database belongs to somebody else.
+   *
+   * The table's DDL is idempotent (drizzle/0005_presence.sql), so the route now
+   * creates it and retries once. Note this only works because the server has
+   * not already marked the schema as ensured: the suites above ran against an
+   * existing table, so `ensurePresenceSchema()` has not been called yet.
+   */
+  test("the server creates the missing table and the roster still loads", async () => {
+    await pool.query(`DROP TABLE IF EXISTS user_presence`);
+    const gone = await pool.query(`SELECT to_regclass('public.user_presence') AS t`);
+    assert.equal(gone.rows[0].t, null, "fixture: the table should be gone");
+
+    const r = await api("/api/presence", { cookie: await ownerCookie() });
+    assert.equal(
+      r.status,
+      200,
+      `the roster should repair itself, got ${r.status}: ${JSON.stringify(r.data)}`
+    );
+    assert.ok(Array.isArray(r.data.users), "a roster came back with the healed table");
+    assert.equal(r.data.windowSeconds, ONLINE_WINDOW_SECONDS);
+
+    // …and it is the same table the migration makes: index and FK included.
+    const back = await pool.query(`SELECT to_regclass('public.user_presence') AS t`);
+    assert.ok(back.rows[0].t, "user_presence was not recreated");
+    const indexes = await pool.query(
+      `SELECT indexname FROM pg_indexes WHERE tablename = 'user_presence'`
+    );
+    assert.ok(
+      indexes.rows.some((row) => row.indexname === "user_presence_last_seen_idx"),
+      "the last_seen index is missing from the recreated table"
+    );
+    const fks = await pool.query(
+      `SELECT conname FROM pg_constraint
+        WHERE conrelid = 'public.user_presence'::regclass AND contype = 'f'`
+    );
+    assert.equal(fks.rows[0]?.conname, "user_presence_user_id_users_id_fk");
+  });
+
+  test("a table dropped *after* the first repair is repaired again", async () => {
+    // The process has already created the table once, so it remembers the
+    // schema as fine. A stale memory must not turn into a permanent 503: the
+    // 42P01 that follows is proof enough to try the DDL again.
+    await pool.query(`DROP TABLE IF EXISTS user_presence`);
+    const r = await api("/api/presence", { cookie: await ownerCookie() });
+    assert.equal(
+      r.status,
+      200,
+      `a second repair was expected, got ${r.status}: ${JSON.stringify(r.data)}`
+    );
+    const back = await pool.query(`SELECT to_regclass('public.user_presence') AS t`);
+    assert.ok(back.rows[0].t, "user_presence was not recreated the second time");
+  });
+
+  test("heartbeats work again on the repaired table", async () => {
+    const beat = await api("/api/presence", {
+      method: "POST",
+      cookie: await sessionCookieFor(ONLINE),
+      body: { activity: "Back online", device: "Chrome · macOS" },
+    });
+    assert.equal(beat.status, 200, `heartbeat failed: ${JSON.stringify(beat.data)}`);
+
+    const r = await api("/api/presence", { cookie: await ownerCookie() });
+    const online = r.data.users.find((u) => u.id === ONLINE);
+    assert.equal(online.online, true);
+    assert.equal(online.activity, "Back online");
+  });
+});
+
