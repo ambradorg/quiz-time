@@ -36,6 +36,13 @@
       "when": 1789478127728,
       "tag": "0004_spaced_repetition",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789629155201,
+      "tag": "0005_presence",
+      "breakpoints": true
     }
   ]
 }

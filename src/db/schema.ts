@@ -136,6 +136,48 @@ export const cardReviews = pgTable(
   ]
 );
 
+/**
+ * Presence heartbeats — one row per user, overwritten as they use the app.
+ *
+ * The owner's "who's online" roster (see src/lib/presence.ts and
+ * GET /api/presence) is computed from this table alone: a user is online while
+ * `last_seen_at` is younger than the online window (90 s, three missed
+ * heartbeats at a 30 s cadence).
+ *
+ * Why a single upserted row instead of a session/event log:
+ *   - the roster only ever asks "when was each user last seen?", which is one
+ *     indexed row per account,
+ *   - there is nothing to clean up — a closed tab simply stops refreshing
+ *     `last_seen_at` and the user drops out of the window,
+ *   - it stays tiny on serverless hosting (no sockets, no Redis).
+ *
+ * `user_id` is the primary key so the heartbeat is a single
+ * `INSERT … ON CONFLICT (user_id) DO UPDATE`. Deleting a user cascades here,
+ * and a sign-in that re-keys a user id (same email, new Google `sub`) follows
+ * via ON UPDATE cascade.
+ *
+ * Caveat, on purpose: rows are *not* deleted when someone signs out — their
+ * last-seen age is exactly what the owner wants to see.
+ */
+export const userPresence = pgTable(
+  "user_presence",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade", onUpdate: "cascade" }),
+    /** When this user last checked in (database clock, never the client's). */
+    lastSeenAt: timestamp("last_seen_at").defaultNow().notNull(),
+    /** Client-supplied label of what they were looking at — sanitised on write. */
+    activity: text("activity"),
+    /** Client-supplied coarse device label ("Chrome · macOS"). */
+    device: text("device"),
+  },
+  (table) => [
+    // "who was seen recently" — the roster's order-by, and cheap pruning later.
+    index("user_presence_last_seen_idx").on(table.lastSeenAt),
+  ]
+);
+
 export const studyResults = pgTable(
   "study_results",
   {

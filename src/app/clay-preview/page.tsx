@@ -16,11 +16,82 @@ import {
   Type,
   X,
 } from "lucide-react";
+import { PresenceBar, PresenceList } from "@/components/owner-presence";
+import { ONLINE_WINDOW_SECONDS } from "@/lib/presence";
+import type { PresenceRoster } from "@/lib/use-presence";
 
 export const metadata: Metadata = {
   title: "Clay Preview – QuizTime",
   description: "Soft-clay design system showcase (no sign-in needed).",
   robots: "noindex",
+};
+
+/**
+ * Sample roster for the "who's online" section below. Plain serialisable data
+ * (no functions), so this server component can hand it to the client
+ * components without any auth or network round trip.
+ */
+const DEMO_ROSTER: PresenceRoster = {
+  online: 3,
+  total: 5,
+  windowSeconds: ONLINE_WINDOW_SECONDS,
+  users: [
+    {
+      id: "demo-owner",
+      name: "You (the owner)",
+      email: "owner@example.com",
+      image: null,
+      isOwner: true,
+      online: true,
+      lastSeenSecondsAgo: 4,
+      activity: "Checking stats",
+      device: "Chrome · macOS",
+    },
+    {
+      id: "demo-ana",
+      name: "Ana Reyes",
+      email: "ana@example.com",
+      image: null,
+      isOwner: false,
+      online: true,
+      lastSeenSecondsAgo: 12,
+      activity: "Studying “Cell Biology”",
+      device: "Safari · iPhone",
+    },
+    {
+      id: "demo-mark",
+      name: "Mark Lim",
+      email: "mark@example.com",
+      image: null,
+      isOwner: false,
+      online: true,
+      lastSeenSecondsAgo: 28,
+      activity: "Reviewing due cards",
+      device: "Chrome · Android",
+    },
+    {
+      id: "demo-june",
+      name: "June Park",
+      email: "june@example.com",
+      image: null,
+      isOwner: false,
+      online: false,
+      lastSeenSecondsAgo: 60 * 12,
+      activity: "Browsing my sets",
+      device: "Firefox · Windows",
+    },
+    {
+      id: "demo-new",
+      name: null,
+      email: "new.friend@example.com",
+      image: null,
+      isOwner: false,
+      online: false,
+      lastSeenSecondsAgo: null,
+      activity: null,
+      device: null,
+    },
+  ],
 };
 
 /**
@@ -236,6 +307,23 @@ export default function ClayPreview() {
           Retake Exam
           <ArrowRight />
         </button>
+      </div>
+
+      {/* Who's online (owner roster) — static sample data, no network */}
+      <h2 style={{ fontSize: 16, fontWeight: 900, margin: "0 0 12px" }}>Who&apos;s online (owner only)</h2>
+      <div className="glass-card" style={{ padding: 18, marginBottom: 20 }}>
+        <p style={{ margin: "0 0 12px", fontSize: 13, color: "var(--text-muted)", lineHeight: 1.5 }}>
+          The owner&apos;s presence strip — it replaces nothing and only ever renders for the address in
+          <code style={{ margin: "0 4px" }}>OWNER_EMAIL</code>. Everyone else sends the same heartbeats
+          and never sees this.
+        </p>
+        <PresenceBar roster={DEMO_ROSTER} />
+        <div style={{ marginTop: 14 }}>
+          <PresenceList users={DEMO_ROSTER.users} ownerId="demo-owner" max={6} />
+        </div>
+        <p style={{ margin: "14px 0 0", fontSize: 11.5, color: "var(--text-muted)", fontWeight: 600 }}>
+          Sample data — online = a heartbeat in the last 90 s.
+        </p>
       </div>
 
       {/* Badges */}

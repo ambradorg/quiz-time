@@ -3,6 +3,7 @@ import Google from "next-auth/providers/google";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { users, type User } from "@/db/schema";
+import { isOwnerEmail } from "@/lib/owner";
 
 /**
  * Auth.js (v5) — Google OAuth with JWT sessions.
@@ -140,6 +141,14 @@ export const authConfig = {
       if (session.user && token.userId) {
         session.user.id = token.userId;
       }
+      // Owner flag for the UI (the "who's online" roster only renders for the
+      // owner). It is computed from the signed-in email + OWNER_EMAIL on every
+      // session read — never stored in the JWT, so changing the env var takes
+      // effect on the next request instead of at the next sign-in. This is a
+      // convenience flag only: /api/presence re-checks it server-side.
+      if (session.user) {
+        session.user.isOwner = isOwnerEmail(session.user.email);
+      }
       return session;
     },
   },
@@ -155,6 +164,8 @@ declare module "next-auth" {
       name?: string | null;
       email?: string | null;
       image?: string | null;
+      /** Signed in with the address in OWNER_EMAIL — see src/lib/owner.ts. */
+      isOwner?: boolean;
     };
   }
 }

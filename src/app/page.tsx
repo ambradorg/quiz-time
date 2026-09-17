@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { LoginPage } from "@/components/login-page";
+import { OwnerPresenceBar } from "@/components/owner-presence";
 import {
   extractPdfText,
   isPasswordProtectedPdf,
@@ -38,6 +39,7 @@ import {
   sendOrQueueWrite,
 } from "@/lib/offline";
 import { useOfflineIdentity, useOnlineStatus, useOutbox } from "@/lib/use-offline";
+import { usePresenceHeartbeat } from "@/lib/use-presence";
 import { MascotHost } from "@/components/hamster-mascot";
 import { mascotEvent, mascotSay } from "@/lib/mascot";
 import {
@@ -5846,6 +5848,44 @@ export default function App() {
   const signedIn = Boolean(user?.id);
   const outbox = useOutbox();
 
+  // Does this session belong to the app owner (OWNER_EMAIL)? The flag comes
+  // from the session callback in src/auth.ts, so it is decided server-side;
+  // it only ever controls UI — /api/presence re-checks it on every request.
+  const isOwner = Boolean(session?.user?.isOwner);
+
+  // The open deck, if any — computed up here because the presence heartbeat
+  // below needs it, and hooks must run before the sign-in gate's early return.
+  const isViewingSession = activeSessionCards !== null && activeSessionId !== null && !pendingCards;
+
+  // What the owner's roster shows next to this user ("Studying “Cell Biology”").
+  // Short and human on purpose: it is a hint about what someone is up to, not a
+  // log of what they did.
+  const presenceActivity = useMemo(() => {
+    if (deckEditor) return "Editing a set";
+    if (tab === "quiz") {
+      if (isViewingSession) {
+        return activeSessionTitle ? `Studying “${activeSessionTitle}”` : "Studying";
+      }
+      return pendingCards ? "Reviewing new cards" : "Studying";
+    }
+    if (tab === "upload") return "Creating a set";
+    if (tab === "sessions") return "Browsing my sets";
+    if (tab === "review") return "Reviewing due cards";
+    if (tab === "stats") return "Checking stats";
+    return "On the home screen";
+  }, [
+    deckEditor,
+    tab,
+    isViewingSession,
+    activeSessionTitle,
+    pendingCards,
+  ]);
+
+  // "Who's online": every signed-in browser checks in every 30 s (offline we
+  // skip it — beating into a dead connection just wastes battery). Only the
+  // owner sees the roster the beats feed.
+  usePresenceHeartbeat({ enabled: signedIn && online, activity: presenceActivity });
+
   // Whether the open deck came from this device's cache (drives the notice and
   // keeps the user from wondering why edits are disabled).
   const [activeSessionOffline, setActiveSessionOffline] = useState(false);
@@ -6137,8 +6177,6 @@ export default function App() {
     return <LoginPage loading={!identity.ready || status === "loading"} />;
   }
 
-  const isViewingSession = activeSessionCards !== null && activeSessionId !== null && !pendingCards;
-
   const renderContent = () => {
     // The deck editor takes over the whole screen while open.
     if (deckEditor) {
@@ -6390,6 +6428,11 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {/* Owner only: "Who's online" — a live presence roster fed by the
+          heartbeats every signed-in browser sends (see src/lib/presence.ts).
+          Renders nothing for normal users; the API 403s them anyway. */}
+      {isOwner && <OwnerPresenceBar />}
 
       {/* Page content */}
       <div className="page-content">
