@@ -27,6 +27,11 @@ QuizTime turns them into flashcards, then lets you review them four ways:
   at all: the account, all four study modes, progress and the spaced-repetition
   queue keep working, and everything you answer syncs when you're back online —
   see [Offline study](#offline-study).
+- **Owner view** – set `OWNER_EMAIL` and that account gets a live *who's online*
+  roster: everyone using the app right now, what each of them is looking at,
+  and when everybody else was last seen (their own private copy — no other
+  account ever sees it) — see
+  [Who's online](#whos-online-owner-roster).
 
 ## Uploading
 
@@ -98,6 +103,7 @@ longer safety net.
 | `AUTH_GOOGLE_ID` | for sign-in | Google OAuth client ID. |
 | `AUTH_GOOGLE_SECRET` | for sign-in | Google OAuth client secret. |
 | `MAINTENANCE_MODE` | no | `1`/`true`/`yes`/`on` enables [maintenance mode](#maintenance-mode): signed-out visitors get a maintenance page, signed-in users get a banner and keep full access. |
+| `OWNER_EMAIL` | no | The account that becomes the **owner**: it gets the live [“Who's online”](#whos-online-owner-roster) roster. Case-insensitive; comma-separated addresses allowed (e.g. two Google accounts). Empty/unset = the feature is off and nobody is the owner. |
 
 > ⚠️ Never commit `.env`. It is listed in `.gitignore`; if it was ever pushed,
 > rotate the API key.
@@ -462,6 +468,94 @@ openssl rand -base64 32   # → AUTH_SECRET
 - The Gemini-generating endpoint is also sign-in-only, and the rate limit is
   now bucketed per user.
 
+## Who's online (owner roster)
+
+Set one env var and that account becomes the **owner**:
+
+```bash
+OWNER_EMAIL=you@example.com        # comma-separated list is allowed
+```
+
+The owner gets a live **Who's online** strip above the page content ("3 online ›").
+Tapping it opens a roster of everybody who has an account:
+
+- **Online now** — a heartbeat in the last 90 seconds (green dot, live count),
+- **Recently active** — "12 min ago", "yesterday", with what they were last
+  looking at ("Studying “Cell Biology”") and a coarse device label
+  ("Safari · iPhone") — never a raw user-agent string,
+- **Never seen** — accounts that have signed in but never checked in since
+  this feature shipped.
+
+Nobody else ever sees any of it: the strip is rendered from
+`session.user.isOwner`, and `/api/presence` re-checks the session's email
+against `OWNER_EMAIL` on every request (401 anonymous, 403 for other signed-in
+users, without disclosing who the owner is).
+
+### How it works
+
+- Every signed-in browser sends a tiny heartbeat to `POST /api/presence` every
+  30 s (`HEARTBEAT_INTERVAL_MS`), carrying a short label of what it is looking
+  at. A user counts as **online** while their last heartbeat is younger than
+  90 s (`ONLINE_WINDOW_SECONDS`) — three beats of slack, so one missed beat
+  (a flaky phone, a suspended laptop) never flickers anybody offline.
+- Closing a tab needs no "goodbye": the beats simply stop and the user drops
+  out of the window. Background tabs pause; returning to the tab checks in
+  immediately.
+- One upserted row per user (`user_presence`), so the feature costs one small
+  write per heartbeat and stays serverless-friendly — no sockets, no Redis.
+- Ages are measured by the **database** (`now()` minus the row), never by a
+  client timestamp, so clock skew and timezones can't stretch the window. The
+  rules — window, sanitisers, sorting — live in `src/lib/presence.ts` (pure and
+  unit-tested in `scripts/presence.test.mjs`); the React glue is
+  `src/lib/use-presence.ts`; the UI is `src/components/owner-presence.tsx`.
+- What the client sends is only ever a *label*: control characters are
+  stripped, values are length-capped (60 chars for activity, 40 for device) and
+  the user id always comes from the session — never from the request body.
+
+### API
+
+| Route | Purpose |
+| --- | --- |
+| `POST /api/presence` | Heartbeat from any signed-in user: `{ activity?, device? }` → `{ ok: true, online }`, where `online` is the live count for the owner and `null` for everybody else. Upserts the caller's `user_presence` row. |
+| `GET /api/presence` | The roster — **owner only**: `{ online, total, windowSeconds, users: [{ id, name, email, image, isOwner, online, lastSeenSecondsAgo, activity, device }] }`. Every account is listed (LEFT JOIN), online first, then most recent; `lastSeenSecondsAgo` is `null` for accounts that never checked in. |
+
+### Good to know
+
+- Presence is a *hint*, not a promise: someone who closes the tab shows as
+  online for up to 90 s, and a user with no connection (offline mode) simply
+  ages out — the app skips heartbeats while offline.
+- Changing `OWNER_EMAIL` takes effect on the next request (the env var is read
+  per call, never baked into the JWT), so moving the owner between accounts
+  needs no rebuild and no re-login.
+- Rows are not deleted on sign-out or after a long absence: "last seen 3 weeks
+  ago" is exactly what the roster is for. Deleting a user cascades their row
+  away.
+
+### Production migration (Supabase)
+
+Migration `drizzle/0005_presence.sql` is idempotent. Paste this into the
+Supabase SQL editor and run it once:
+
+```sql
+CREATE TABLE IF NOT EXISTS "user_presence" (
+	"user_id" text PRIMARY KEY NOT NULL,
+	"last_seen_at" timestamp DEFAULT now() NOT NULL,
+	"activity" text,
+	"device" text
+);
+
+DO $$
+BEGIN
+    ALTER TABLE "user_presence" ADD CONSTRAINT "user_presence_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE cascade;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+CREATE INDEX IF NOT EXISTS "user_presence_last_seen_idx" ON "user_presence" USING btree ("last_seen_at");
+```
+
+To see the roster without waiting for real users, open `/clay-preview` — it
+renders the same components with sample data, no sign-in needed.
+
 ## Study Stats & Progress (P2)
 
 Every card answered in **Study mode** ("Got it / Still learning") and **Exam
@@ -577,7 +671,18 @@ npm run build && npm run start          # or: npm run dev
 # 2. in another shell (reuses a running server, or spawns its own):
 BASE_URL=http://127.0.0.1:3000 npm run test:e2e
 BASE_URL=http://127.0.0.1:3000 npm run test:offline-e2e   # offline round trip, see below
+BASE_URL=http://127.0.0.1:3000 OWNER_EMAIL=you@example.com npm run test:presence-e2e
 ```
+
+`scripts/presence-e2e.mjs` covers the owner roster end to end: 401 for
+anonymous callers, 403 for signed-in non-owners (without leaking the owner's
+address), a non-owner heartbeat that records presence but never returns the
+count, sanitisation of whatever the client sends, the online/offline boundary
+either side of the 90 s window, upsert-not-insert, and the cascade when a user
+is deleted. It signs the owner in with the *first* address in `OWNER_EMAIL`,
+so the suite also proves the env var — not the database — decides who the owner
+is. A server started for this suite must see the same `OWNER_EMAIL`
+(the suite spawns one itself when `BASE_URL` isn't answering).
 
 `scripts/offline-e2e.test.mjs` is the offline counterpart: it drives the real
 client module (`src/lib/offline.ts`) over HTTP with a minted session cookie,
@@ -701,9 +806,11 @@ npm run test:failover   # failover-engine unit tests (no db, no network)
 npm run test:openrouter # OpenRouter adapter tests (fake endpoint)
 npm run test:scan       # /api/scan failover tests (real SDK, fake endpoints)
 npm run test:srs        # spaced-repetition scheduler tests (no db, no network)
+npm run test:presence   # "who's online" rules: owner email, window, sanitisers
 npm run test:offline    # offline core + browser glue + service-worker contract
 npm run test:offline-e2e # offline round trip against a real server + database
 npm run test:e2e        # auth/stats e2e suite (minted JWTs, real HTTP)
+npm run test:presence-e2e # owner-only roster e2e (needs OWNER_EMAIL, db + server)
 ```
 
 ## Notes
