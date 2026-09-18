@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { signIn } from "next-auth/react";
-import { CloudOff, WifiOff } from "lucide-react";
+import { CloudOff, FlaskConical, WifiOff } from "lucide-react";
 import {
   enableOfflineMode,
   isOfflineMode,
@@ -57,6 +57,22 @@ export function LoginPage({
 
   const [browserOffline, setBrowserOffline] = useState(false);
 
+  // Demo sign-in is a server-side opt-in (DEMO_LOGIN=1, dev/preview only) —
+  // the config endpoint tells us whether to offer the button.
+  const [demoLogin, setDemoLogin] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/config")
+      .then((r) => r.json())
+      .then((data) => {
+        if (alive) setDemoLogin(Boolean(data.demoLogin));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   useEffect(() => {
     let alive = true;
     const sync = () => setBrowserOffline(navigator.onLine === false);
@@ -81,6 +97,14 @@ export function LoginPage({
   const handleSignIn = () => {
     setSigningIn(true);
     void signIn("google", { callbackUrl: "/" }).catch(() => {
+      setSigningIn(false);
+      setError(AUTH_ERRORS.Default);
+    });
+  };
+
+  const handleDemoSignIn = () => {
+    setSigningIn(true);
+    void signIn("demo", { callbackUrl: "/" }).catch(() => {
       setSigningIn(false);
       setError(AUTH_ERRORS.Default);
     });
@@ -213,6 +237,36 @@ export function LoginPage({
                 </>
               )}
             </button>
+
+            {demoLogin && (
+              <>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    margin: "16px 0",
+                  }}
+                >
+                  <div style={{ flex: 1, height: 1, background: "rgba(147,197,253,0.4)" }} />
+                  <span className="login-footnote" style={{ margin: 0 }}>or</span>
+                  <div style={{ flex: 1, height: 1, background: "rgba(147,197,253,0.4)" }} />
+                </div>
+                <button
+                  className="btn btn-secondary btn-lg"
+                  style={{ width: "100%" }}
+                  onClick={handleDemoSignIn}
+                  disabled={signingIn}
+                >
+                  <FlaskConical />
+                  Try it as a demo student
+                </button>
+                <p className="login-footnote" style={{ marginTop: 8 }}>
+                  Demo mode is on for this server — it opens a local test
+                  account, no Google needed.
+                </p>
+              </>
+            )}
 
             <p className="login-footnote">
               Free · no password to remember · your decks stay in your account

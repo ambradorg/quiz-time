@@ -1,5 +1,6 @@
 import NextAuth, { type NextAuthConfig } from "next-auth";
 import Google from "next-auth/providers/google";
+import Credentials from "next-auth/providers/credentials";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { users, type User } from "@/db/schema";
@@ -72,12 +73,39 @@ async function rekeyUserByEmail(next: {
   return moved;
 }
 
+/**
+ * Demo sign-in for local development and preview sandboxes, where no Google
+ * OAuth client is configured. Gated behind DEMO_LOGIN=1 (never set in
+ * production): it signs in a fixed, clearly-labelled demo student so the
+ * whole app — including the first-login course picker — can be exercised
+ * end to end.
+ */
+const demoProvider =
+  process.env.DEMO_LOGIN === "1"
+    ? [
+        Credentials({
+          id: "demo",
+          name: "Demo student",
+          credentials: {},
+          async authorize() {
+            return {
+              id: "demo-student",
+              name: "Demo Student",
+              email: "demo.student@quiztime.local",
+              image: null,
+            };
+          },
+        }),
+      ]
+    : [];
+
 export const authConfig = {
   providers: [
     Google({
       clientId: process.env.AUTH_GOOGLE_ID ?? "",
       clientSecret: process.env.AUTH_GOOGLE_SECRET ?? "",
     }),
+    ...demoProvider,
   ],
   session: { strategy: "jwt" },
   // The app runs behind proxies (Vercel, preview tunnels, local e2e), where
