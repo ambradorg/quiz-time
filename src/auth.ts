@@ -113,6 +113,28 @@ export const authConfig = {
   // Auth.js v5 throws UntrustedHost and every auth() call — and therefore
   // every signed-in API route — fails with 401/500.
   trustHost: true,
+  // Preview sandboxes embed the app in an iframe hosted on a DIFFERENT site
+  // (Arena's UI), which makes every auth cookie "cross-site" to the browser.
+  // The default SameSite=Lax cookies are then never stored or sent — sign-in
+  // dies with MissingCSRF before the first request completes. SameSite=None
+  // with Secure is the supported way to let the cookies flow into the
+  // embedded preview. Gated behind PREVIEW_EMBEDDED=1 (dev/preview .env only):
+  // locally over plain http the browser would reject Secure cookies, and in
+  // production the app is always top-level on its own origin, so both keep
+  // the stricter Lax default (which also protects against CSRF in the wild).
+  ...(process.env.PREVIEW_EMBEDDED === "1"
+    ? {
+        cookies: {
+          sessionToken: { options: { sameSite: "none" as const, secure: true } },
+          csrfToken: { options: { sameSite: "none" as const, secure: true } },
+          callbackUrl: { options: { sameSite: "none" as const, secure: true } },
+          state: { options: { sameSite: "none" as const, secure: true } },
+          pkceCodeVerifier: {
+            options: { sameSite: "none" as const, secure: true },
+          },
+        },
+      }
+    : {}),
   pages: {
     signIn: "/login",
   },
