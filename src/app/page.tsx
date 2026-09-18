@@ -41,6 +41,7 @@ import {
 import { useOfflineIdentity, useOnlineStatus, useOutbox } from "@/lib/use-offline";
 import { usePresenceHeartbeat } from "@/lib/use-presence";
 import { MascotHost } from "@/components/hamster-mascot";
+import { CoursePickerModal } from "@/components/course-picker";
 import { mascotEvent, mascotSay } from "@/lib/mascot";
 import {
   OfflineBadge,
@@ -96,6 +97,7 @@ import {
   Flag,
   Flame,
   FolderOpen,
+  GraduationCap,
   Heart,
   House,
   Image as ImageIcon,
@@ -939,7 +941,14 @@ function isImageFile(file: File): boolean {
   return file.type.startsWith("image/") || /\.(jpe?g|png|webp|heic|heif)$/i.test(file.name || "");
 }
 
-function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title: string, summary: string, sourceType: string) => void }) {
+function UploadPage({
+  course,
+  onCardsReady,
+}: {
+  /** The profile course, used to pre-fill the per-upload "tailor for" field. */
+  course: string | null;
+  onCardsReady: (cards: Flashcard[], title: string, summary: string, sourceType: string) => void;
+}) {
   const [dragOver, setDragOver] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -947,12 +956,23 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
   const [textInput, setTextInput] = useState("");
   const [mode, setMode] = useState<"file" | "text">("file");
   const [picked, setPicked] = useState<PickedFile[]>([]);
+  // Per-upload override: pre-filled from the profile, editable for this one
+  // set, and cleared (→ generic AI prompt) if the user empties it.
+  const [tailorFor, setTailorFor] = useState(course ?? "");
   const fileRef = useRef<HTMLInputElement>(null);
   const pickedRef = useRef<PickedFile[]>([]);
 
   useEffect(() => {
     pickedRef.current = picked;
   }, [picked]);
+
+  // Keep the field in step with the profile (e.g. right after they save a
+  // new course from the modal while this tab is open). Deferred one frame —
+  // a synchronous setState in the effect body would cascade renders.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setTailorFor(course ?? ""));
+    return () => cancelAnimationFrame(frame);
+  }, [course]);
 
   // Release thumbnail URLs when the screen goes away
   useEffect(
@@ -1061,6 +1081,10 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
 
       /** Send one FormData payload to /api/scan and parse the JSON response. */
       const sendScanRequest = async (formData: FormData): Promise<ScanResponse> => {
+        // Attach the course so the server can frame the flashcards for this
+        // student's program (empty → the server uses the generic prompt).
+        const courseValue = tailorFor.trim();
+        if (courseValue) formData.append("course", courseValue);
         const res = await fetch("/api/scan", { method: "POST", body: formData });
 
         // The body may not be JSON (e.g. a host-level 413 page), so parse
@@ -1399,6 +1423,50 @@ function UploadPage({ onCardsReady }: { onCardsReady: (cards: Flashcard[], title
       <p style={{ color: "var(--text-muted)", margin: "0 0 20px", fontSize: 14 }}>
         Upload PDFs, Word docs, PowerPoints or photos — large files are automatically split and uploaded in parts — or paste text!
       </p>
+
+      {/* Tailor-for field: pre-filled from the profile course, editable for
+          this one set. Clear it to generate with the generic prompt. */}
+      <div
+        className="glass-card"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "10px 14px",
+          marginBottom: 16,
+          border: "1.5px solid #bfdbfe",
+          background: "linear-gradient(135deg, #eff6ff, #eef2ff)",
+        }}
+      >
+        <GraduationCap size={19} aria-hidden style={{ color: "#1d4ed8", flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <label
+            htmlFor="tailor-for-course"
+            style={{ display: "block", fontSize: 11, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 2 }}
+          >
+            Tailor flashcards for
+          </label>
+          <input
+            id="tailor-for-course"
+            value={tailorFor}
+            onChange={(e) => setTailorFor(e.target.value)}
+            placeholder="Your course (e.g. BS Pharmacy)"
+            maxLength={80}
+            autoComplete="off"
+            style={{
+              width: "100%",
+              border: "none",
+              outline: "none",
+              background: "transparent",
+              font: "inherit",
+              fontSize: 14.5,
+              fontWeight: 700,
+              color: "var(--text)",
+              padding: 0,
+            }}
+          />
+        </div>
+      </div>
 
       {/* Mode toggle */}
       <div className="clay-segment" style={{ marginBottom: 20 }}>
@@ -5368,6 +5436,8 @@ function HomePage({
   offlineSavedAt,
   offlineBusy,
   onDownloadAll,
+  course,
+  onEditCourse,
 }: {
   onUpload: () => void;
   onSessions: () => void;
@@ -5381,6 +5451,10 @@ function HomePage({
   offlineSavedAt: string | null;
   offlineBusy: boolean;
   onDownloadAll: () => void;
+  /** The user's saved course (null = not chosen yet). */
+  course: string | null;
+  /** Open the course picker in edit mode. */
+  onEditCourse: () => void;
 }) {
   return (
     <div style={{ padding: "20px 16px" }}>
@@ -5428,6 +5502,42 @@ function HomePage({
           Start Studying
         </button>
       </div>
+
+      {/* Course card: the profile course at a glance, tap to change. This is
+          the "be specific for the user course" surface the picker feeds. */}
+      <button
+        className="glass-card animate-fade-in"
+        onClick={onEditCourse}
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "14px 16px",
+          marginBottom: 16,
+          border: course ? "2px solid #bfdbfe" : "2px dashed #93c5fd",
+          background: "linear-gradient(135deg, #eff6ff, #eef2ff)",
+          cursor: "pointer",
+          font: "inherit",
+          color: "var(--text)",
+          textAlign: "left",
+        }}
+      >
+        <span style={{ color: "#1d4ed8", display: "flex", flexShrink: 0 }}>
+          <GraduationCap size={26} aria-hidden />
+        </span>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: "block", fontSize: 14, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {course ? course : "Choose your course"}
+          </span>
+          <span style={{ display: "block", fontSize: 12, color: "var(--text-muted)" }}>
+            {course
+              ? "Your flashcards are tailored to this course — tap to change"
+              : "Tell QuizTime your course and the AI will tailor your flashcards"}
+          </span>
+        </span>
+        <Pencil size={16} aria-hidden style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+      </button>
 
       {/* Offline study: what's on this device, and the one-tap download. */}
       <OfflineReadyCard
@@ -5846,6 +5956,108 @@ export default function App() {
   const identity = useOfflineIdentity({ user: session?.user ?? null, status });
   const user = identity.user;
   const signedIn = Boolean(user?.id);
+
+  // ── Course (course-tailored flashcards) ────────────────────────────────────
+  // The student's course ("BS Pharmacy", or anything they typed). `undefined`
+  // = not loaded yet, `null` = not chosen. A localStorage copy keeps it
+  // visible on offline boots and drives the one-time "asked" flag.
+  const [course, setCourse] = useState<string | null | undefined>(undefined);
+  const [courseModalOpen, setCourseModalOpen] = useState(false);
+  const [courseSaving, setCourseSaving] = useState(false);
+
+  // All state updates happen inside the async callback (never in the effect
+  // body itself — see the IOSInstallPrompt rAF pattern for why).
+  useEffect(() => {
+    if (!signedIn) return;
+    let alive = true;
+    void (async () => {
+      let asked = false;
+      try {
+        asked = window.localStorage.getItem("quiztime:course-asked") === "1";
+      } catch {
+        /* storage blocked — treat as not asked */
+      }
+      // First-login picker: open it once when the user has no course yet and
+      // has never skipped ("Maybe later" sets the asked flag, so it doesn't
+      // nag). Decided right here where the answer is known.
+      const openPicker = (value: string | null) => {
+        if (value === null && !asked) setCourseModalOpen(true);
+      };
+      try {
+        const res = await fetch("/api/profile", { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const value =
+          typeof data.course === "string" && data.course ? data.course : null;
+        if (!alive) return;
+        setCourse(value);
+        openPicker(value);
+        try {
+          window.localStorage.setItem("quiztime:course", value ?? "");
+        } catch {
+          /* non-fatal */
+        }
+      } catch {
+        // Offline or API hiccup — fall back to this device's cached copy so
+        // the Home card and the upload pre-fill still know the course.
+        let cached: string | null = null;
+        try {
+          const raw = window.localStorage.getItem("quiztime:course");
+          cached = raw ? raw : null;
+        } catch {
+          /* ignore */
+        }
+        if (!alive) return;
+        setCourse(cached);
+        openPicker(cached);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [signedIn]);
+
+  const handleSaveCourse = async (value: string) => {
+    if (!online) {
+      showToast("Saving your course needs a connection", CloudOff);
+      return;
+    }
+    setCourseSaving(true);
+    try {
+      const res = await fetch("/api/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ course: value }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save");
+      setCourse(value);
+      try {
+        window.localStorage.setItem("quiztime:course", value);
+      } catch {
+        /* non-fatal */
+      }
+      setCourseModalOpen(false);
+      showToast("Course saved — your flashcards will match it", CircleCheckBig);
+    } catch (err) {
+      showToast(
+        err instanceof Error && err.message ? err.message : "Failed to save",
+        CircleX
+      );
+    } finally {
+      setCourseSaving(false);
+    }
+  };
+
+  const handleSkipCourse = () => {
+    try {
+      window.localStorage.setItem("quiztime:course-asked", "1");
+    } catch {
+      /* non-fatal */
+    }
+    setCourseModalOpen(false);
+  };
+
   const outbox = useOutbox();
 
   // Does this session belong to the app owner (OWNER_EMAIL)? The flag comes
@@ -6239,6 +6451,8 @@ export default function App() {
           offlineSavedAt={offlineInfo.savedAt}
           offlineBusy={offlineBusy}
           onDownloadAll={handleDownloadAll}
+          course={course ?? null}
+          onEditCourse={() => setCourseModalOpen(true)}
         />
       );
     }
@@ -6293,7 +6507,7 @@ export default function App() {
               </button>
             </div>
           )}
-          <UploadPage onCardsReady={handleCardsReady} />
+          <UploadPage course={course ?? null} onCardsReady={handleCardsReady} />
         </>
       );
     }
@@ -6460,6 +6674,18 @@ export default function App() {
           </button>
         ))}
       </nav>
+
+      {/* Course picker: opens on first login (until answered or "Maybe
+          later"), and any time after that from the Home course card. */}
+      {courseModalOpen && (
+        <CoursePickerModal
+          initialCourse={course ?? null}
+          busy={courseSaving}
+          canSkip={course === null}
+          onSave={(value) => void handleSaveCourse(value)}
+          onSkip={handleSkipCourse}
+        />
+      )}
 
       <ToastHost />
       {/* Nibbles 🐹 — floating study buddy (greets on login, tours first-timers,

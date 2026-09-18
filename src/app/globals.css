@@ -1642,3 +1642,106 @@ body {
   }
   .confetti-piece { display: none !important; }
 }
+
+/* ── Course picker modal ("What's your course?") ─────────────────────────── */
+.course-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 16px;
+  background: rgba(23, 43, 77, 0.45);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: fadeIn 0.2s ease;
+}
+
+.course-picker-card {
+  width: 100%;
+  max-width: 460px;
+  background: #ffffff;
+  border: 1.5px solid #dbe7fd;
+  border-radius: 24px;
+  padding: 20px 18px 16px;
+  box-shadow: 0 24px 60px rgba(23, 43, 77, 0.35);
+  animation: slideUp 0.25s ease;
+}
+
+/* One course button: pill chip, 2-up grid. The active one is the clay gradient. */
+.course-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 11px;
+  border-radius: 14px;
+  border: 2px solid #dbe7fd;
+  background: #f4f7ff;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+}
+
+.course-chip:hover:not(:disabled) {
+  border-color: #93c5fd;
+  background: #eef4ff;
+}
+
+.course-chip:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.course-chip.active {
+  background: linear-gradient(135deg, #3b82f6, #7c3aed);
+  border-color: transparent;
+  color: white;
+  box-shadow: 0 6px 16px rgba(79, 109, 245, 0.35);
+}
+
+.course-chip.wide {
+  justify-content: center;
+  width: 100%;
+  border-style: dashed;
+  color: #4338ca;
+  background: #eef2ff;
+}
+
+.course-chip.wide:hover:not(:disabled) {
+  background: #e0e7ff;
+}
+
+.course-chip:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* The "Something else…" free-text field, styled like the app's clay inputs. */
+.course-other-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 2px solid var(--blue, #3b82f6);
+  background: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+
+.course-picker-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.course-picker-list::-webkit-scrollbar-thumb {
+  background: #c7d9f7;
+  border-radius: 999px;
+}

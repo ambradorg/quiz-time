@@ -17,6 +17,13 @@ export const users = pgTable("users", {
   name: text("name"),
   image: text("image"),
   provider: text("provider").notNull().default("google"),
+  /**
+   * The student's course / program (e.g. "BS Pharmacy"), chosen in the
+   * first-login course picker. Free text: a known program from
+   * src/lib/courses.ts or anything the user typed. Nullable until they
+   * answer the picker — the AI prompt falls back to generic framing.
+   */
+  course: text("course"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

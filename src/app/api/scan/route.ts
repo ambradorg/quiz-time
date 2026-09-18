@@ -10,6 +10,7 @@ import {
 } from "@/lib/failover";
 import { isRateLimited } from "@/lib/rate-limit";
 import { requireUser } from "@/lib/auth-guard";
+import { coursePromptContext } from "@/lib/course-context";
 
 export const maxDuration = 60;
 
@@ -97,6 +98,12 @@ export async function POST(request: NextRequest) {
       .getAll("file")
       .filter((value): value is File => typeof value !== "string");
     const textContent = formData.get("text") as string | null;
+    // The student's course ("BS Pharmacy", or anything they typed) — used to
+    // frame the flashcards for their audience. Sent per upload: the upload
+    // screen pre-fills it from the profile, but the user can override it
+    // there for a one-off set. Absent/empty → the generic prompt.
+    const course = ((formData.get("course") as string | null) ?? "").trim();
+    const prompt = SYSTEM_PROMPT + coursePromptContext(course);
 
     if (files.length === 0 && !textContent) {
       return NextResponse.json({ error: "No file or text provided" }, { status: 400 });
@@ -217,11 +224,11 @@ export async function POST(request: NextRequest) {
 
       parts.push(
         files.length > 1 || (textContent && textContent.trim())
-          ? `You were given ${files.length + (textContent && textContent.trim() ? 1 : 0)} study sources (in this order). ${SYSTEM_PROMPT} Make sure the flashcards cover ALL of the sources, not just the first one.`
-          : SYSTEM_PROMPT
+          ? `You were given ${files.length + (textContent && textContent.trim() ? 1 : 0)} study sources (in this order). ${prompt} Make sure the flashcards cover ALL of the sources, not just the first one.`
+          : prompt
       );
     } else {
-      parts = [`Here is the study text content:\n\n${textContent}\n\n${SYSTEM_PROMPT}`];
+      parts = [`Here is the study text content:\n\n${textContent}\n\n${prompt}`];
     }
 
     // Model selection with automatic failover: if the primary model is at its
