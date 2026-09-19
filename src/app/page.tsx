@@ -6577,7 +6577,7 @@ export default function App() {
             QuizTime
           </h1>
           <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)" }}>Your AI Study Partner</p>
-          <p className="app-developer">Developed by: John Lloyd Ambrad</p>
+          <p className="app-developer">Developed by: FBC BSIT 3</p>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
           {/* Offline badge + "N answers waiting to sync" (tap to sync now). */}
