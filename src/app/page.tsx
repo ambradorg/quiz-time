@@ -4491,6 +4491,32 @@ function MoveSheet({
 
   const unchanged = selected === (session.subjectId ?? null);
 
+  // While the sheet is open the page behind it must not scroll — otherwise
+  // a swipe meant for the folder list (or to reach "Move here") moves the
+  // study-sets list instead and the save button stays off-screen.
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtml = html.style.overflow;
+    const prevBody = body.style.overflow;
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    const stopScroll = (e: Event) => {
+      // Let the sheet's own list scroll; block everything else.
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("[data-move-sheet-scroll]")) return;
+      e.preventDefault();
+    };
+    document.addEventListener("wheel", stopScroll, { passive: false });
+    document.addEventListener("touchmove", stopScroll, { passive: false });
+    return () => {
+      html.style.overflow = prevHtml;
+      body.style.overflow = prevBody;
+      document.removeEventListener("wheel", stopScroll);
+      document.removeEventListener("touchmove", stopScroll);
+    };
+  }, []);
+
   return (
     <div
       style={{
@@ -4503,6 +4529,7 @@ function MoveSheet({
         display: "flex",
         alignItems: "flex-end",
         justifyContent: "center",
+        overscrollBehavior: "none",
       }}
       onClick={onClose}
       role="presentation"
@@ -4513,21 +4540,37 @@ function MoveSheet({
           width: "100%",
           maxWidth: 520,
           maxHeight: "80vh",
-          overflowY: "auto",
+          display: "flex",
+          flexDirection: "column",
           background: "var(--card)",
           borderRadius: "26px 26px 0 0",
-          padding: "12px 18px calc(20px + env(safe-area-inset-bottom))",
           boxShadow: "0 -12px 30px rgba(43,80,180,0.25)",
+          overscrollBehavior: "contain",
         }}
         onClick={(e) => e.stopPropagation()}
+        onWheel={(e) => e.stopPropagation()}
+        onTouchMove={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label={`Move ${session.title} to a subject`}
       >
+        <div style={{ padding: "12px 18px 0", flexShrink: 0 }}>
         <div style={{ width: 40, height: 5, borderRadius: 999, background: "#dbe4f2", margin: "2px auto 14px" }} aria-hidden />
         <h3 style={{ margin: "0 0 14px", fontSize: 17, fontWeight: 800, textAlign: "center" }}>
           Move <span style={{ color: "#1d4ed8" }}>“{session.title}”</span> to…
         </h3>
+        </div>
+        <div
+          data-move-sheet-scroll
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: "auto",
+            overscrollBehavior: "contain",
+            WebkitOverflowScrolling: "touch",
+            padding: "0 18px",
+          }}
+        >
 
         {subjects === null ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -4654,7 +4697,16 @@ function MoveSheet({
             Create new subject
           </button>
         )}
+        </div>
 
+        <div
+          style={{
+            flexShrink: 0,
+            padding: "12px 18px calc(20px + env(safe-area-inset-bottom))",
+            borderTop: "1px solid rgba(147,197,253,0.35)",
+            background: "var(--card)",
+          }}
+        >
         <div style={{ display: "flex", gap: 10 }}>
           {(session.subjectId ?? null) !== null && (
             <button
@@ -4689,6 +4741,7 @@ function MoveSheet({
             You&apos;re offline — moving sets needs a connection.
           </p>
         )}
+        </div>
       </div>
     </div>
   );
