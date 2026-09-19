@@ -84,7 +84,7 @@ test("reminderWindow matches the configured window exactly once per day", () => 
   assert.equal(reminderWindow(pref.reminderTime, pref.timeZone, at("19:09")).inWindow, true);
   assert.equal(reminderWindow(pref.reminderTime, pref.timeZone, at("19:10")).inWindow, false);
   assert.equal(reminderWindow(pref.reminderTime, pref.timeZone, at("19:00")).localDate, "2026-09-19");
-  assert.equal(CRON_WINDOW_MINUTES, 10); // matches the vercel.json cron cadence
+  assert.equal(CRON_WINDOW_MINUTES, 10); // matches the scheduler cadence (.github/workflows/reminders-cron.yml)
   // Garbage in, null out — cron skips, never throws.
   assert.equal(reminderWindow("nope", "Asia/Manila", at("19:00")), null);
   assert.equal(reminderWindow("19:00", "Not/AZone", at("19:00")), null);

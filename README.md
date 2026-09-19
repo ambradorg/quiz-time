@@ -657,11 +657,13 @@ on their lock screen, even with QuizTime closed).
 1. The bell's panel (`src/components/notification-center.tsx`) asks for
    permission, subscribes via the service worker, and POSTs the subscription
    to `/api/notifications/subscribe`.
-2. `vercel.json` schedules `/api/cron/reminders` every 10 minutes. Each run
-   finds users with due cards whose local clock is inside their reminder
-   window (`src/lib/notifications.ts` → `reminderWindow`), writes **one**
-   inbox row per (user, local day) — the unique key is the dedupe — and
-   queues a delivery per device.
+2. A scheduler knocks on `/api/cron/reminders` every 10 minutes —
+   `.github/workflows/reminders-cron.yml` on Vercel Hobby (Hobby's own cron
+   is daily-only), or `vercel.json`'s `crons` entry on Pro. Each run finds
+   users with due cards whose local clock is inside their reminder window
+   (`src/lib/notifications.ts` → `reminderWindow`), writes **one** inbox row
+   per (user, local day) — the unique key is the dedupe — and queues a
+   delivery per device.
 3. The same run drains the delivery queue with row leases + bounded retries
    (5 min, 10 min, then give up). Endpoints the push service reports gone
    (404/410) are pruned automatically.
@@ -702,10 +704,22 @@ the feature degrades, never breaks.
 
 ### Production migration (Supabase)
 
-Apply `drizzle/0008_push_notifications.sql` in the SQL editor (it is plain,
-idempotent-free DDL — run it once), or `npm run db:migrate` against the
-database. Then set the four env vars above **and** keep the Vercel Cron job
-(`vercel.json` ships it; on other hosts call the route every 10 minutes).
+Apply `drizzle/0008_push_notifications.sql` in the SQL editor (run it once),
+or `npm run db:migrate` against the database. Then set the four env vars
+above and make sure something calls the route every ~10 minutes:
+
+- **Vercel Hobby (default here):** the GitHub Actions workflow
+  `.github/workflows/reminders-cron.yml` is the scheduler. Set the repo
+  **secret** `CRON_SECRET` (same value as the Vercel env var) and the repo
+  **variable** `CRON_URL` (your deployment origin, e.g.
+  `https://quiz-time.vercel.app`). Scheduled runs begin once the workflow
+  is on the default branch; the Actions tab can trigger a manual tick
+  anytime.
+- **Vercel Pro:** you may instead add back a `crons` entry in `vercel.json`
+  (`"schedule": "*/10 * * * *"`); the inbox dedupe makes overlapping
+  schedulers harmless.
+- **Other hosts:** any cron that calls the route with
+  `Authorization: Bearer $CRON_SECRET` works.
 
 ## Study Stats & Progress (P2)
 
