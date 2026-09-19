@@ -4522,7 +4522,9 @@ function MoveSheet({
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 80,
+        // Above the fixed bottom nav (100) and mascot (90), so the
+        // footer stays visible and receives taps instead of the dock.
+        zIndex: 200,
         background: "rgba(16,35,63,0.45)",
         backdropFilter: "blur(3px)",
         WebkitBackdropFilter: "blur(3px)",
@@ -4539,7 +4541,8 @@ function MoveSheet({
         style={{
           width: "100%",
           maxWidth: 520,
-          maxHeight: "80vh",
+          maxHeight: "80dvh",
+          overflow: "hidden",
           display: "flex",
           flexDirection: "column",
           background: "var(--card)",

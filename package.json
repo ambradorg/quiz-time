@@ -20,7 +20,8 @@
     "test:presence-e2e": "tsx scripts/presence-e2e.mjs",
     "test:offline-e2e": "tsx --test scripts/offline-e2e.test.mjs",
     "test:e2e": "tsx scripts/auth-e2e.mjs",
-    "test:deck-editor": "tsx scripts/deck-editor.test.mjs"
+    "test:deck-editor": "tsx scripts/deck-editor.test.mjs",
+    "test:move-sheet": "playwright test --config scripts/move-sheet.playwright.config.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -38,6 +39,7 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
     "@electric-sql/pglite-socket": "^0.2.11",
+    "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "4.1.17",
     "@types/node": "22.19.15",
     "@types/pg": "8.18.0",
