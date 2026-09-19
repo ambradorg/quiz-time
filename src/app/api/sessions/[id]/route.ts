@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { studySessions, flashcards, cardProgress } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { studySessions, flashcards, cardProgress, subjects } from "@/db/schema";
+import { and, eq, sql } from "drizzle-orm";
 import { requireUser } from "@/lib/auth-guard";
 
 // Same limits as POST /api/sessions — keep deck metadata consistent.
@@ -99,7 +99,39 @@ export async function PATCH(
     if (notFound) return notFound;
 
     const body = await request.json();
-    const { cardId, isKnown, title, summary } = body;
+    const { cardId, isKnown, title, summary, subjectId } = body;
+
+    // ── Move to / out of a subject folder ─────────────────────────────────
+    // A payload carrying `subjectId` (possibly null = unfile) re-files the
+    // deck. Renames stay on the metadata path below — one request, one job.
+    if (subjectId !== undefined) {
+      // The target folder must exist and belong to this user (null unfiles).
+      let resolvedSubjectId: number | null = null;
+      if (subjectId !== null) {
+        if (typeof subjectId !== "number" || !Number.isInteger(subjectId)) {
+          return NextResponse.json(
+            { error: "subjectId must be an integer or null" },
+            { status: 400 }
+          );
+        }
+        const [subject] = await db
+          .select({ id: subjects.id })
+          .from(subjects)
+          .where(and(eq(subjects.id, subjectId), eq(subjects.userId, guard.user.id)));
+        if (!subject) {
+          return NextResponse.json({ error: "Subject not found" }, { status: 404 });
+        }
+        resolvedSubjectId = subjectId;
+      }
+
+      const [updated] = await db
+        .update(studySessions)
+        .set({ subjectId: resolvedSubjectId })
+        .where(eq(studySessions.id, sessionId))
+        .returning({ id: studySessions.id, subjectId: studySessions.subjectId });
+
+      return NextResponse.json({ success: true, session: updated });
+    }
 
     // ── Deck metadata update (rename / edit summary) ─────────────────────
     // Any payload carrying `title` or `summary` edits the deck itself;

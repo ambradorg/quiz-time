@@ -50,6 +50,13 @@
       "when": 1789737237652,
       "tag": "0006_white_wendell_vaughn",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789810637714,
+      "tag": "0007_subjects",
+      "breakpoints": true
     }
   ]
 }

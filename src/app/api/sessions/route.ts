@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { studySessions, flashcards, cardProgress, cardReviews } from "@/db/schema";
+import { studySessions, flashcards, cardProgress, cardReviews, subjects } from "@/db/schema";
 import { desc, eq, and, sql } from "drizzle-orm";
 import { requireUser } from "@/lib/auth-guard";
 
@@ -22,6 +22,8 @@ export async function GET() {
         sourceText: studySessions.sourceText,
         summary: studySessions.summary,
         createdAt: studySessions.createdAt,
+        // Which subject folder the set is filed under (null = All Sets only).
+        subjectId: studySessions.subjectId,
         // ::int — pg returns bigint as strings, which breaks numeric
         // comparisons client-side ("9" >= "10" is true as strings).
         cardCount: sql<number>`count(${flashcards.id})::int`,
@@ -65,6 +67,29 @@ const MAX_SUMMARY_CHARS = 500;
 const MAX_CARDS = 200;
 const VALID_DIFFICULTIES = ["easy", "medium", "hard"];
 
+/**
+ * Validate an optional `subjectId` from a request body: either absent/null
+ * (→ null, "All Sets") or the id of a subject owned by this user. Returns
+ * [subjectId, errorResponse] — the second is non-null on a bad request.
+ */
+async function resolveSubjectId(
+  raw: unknown,
+  userId: string
+): Promise<[number | null, NextResponse | null]> {
+  if (raw === undefined || raw === null) return [null, null];
+  if (typeof raw !== "number" || !Number.isInteger(raw)) {
+    return [null, NextResponse.json({ error: "subjectId must be an integer or null" }, { status: 400 })];
+  }
+  const [subject] = await db
+    .select({ id: subjects.id })
+    .from(subjects)
+    .where(and(eq(subjects.id, raw), eq(subjects.userId, userId)));
+  if (!subject) {
+    return [null, NextResponse.json({ error: "Subject not found" }, { status: 404 })];
+  }
+  return [raw, null];
+}
+
 export async function POST(request: NextRequest) {
   try {
     const guard = await requireUser();
@@ -96,6 +121,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Optional subject folder — creating "+ New Set" inside a subject files
+    // the deck straight away. Must be owned by this user.
+    const [subjectId, subjectError] = await resolveSubjectId(body.subjectId, guard.user.id);
+    if (subjectError) return subjectError;
+
     const [session] = await db
       .insert(studySessions)
       .values({
@@ -107,6 +137,7 @@ export async function POST(request: NextRequest) {
             ? summary.trim().slice(0, MAX_SUMMARY_CHARS)
             : null,
         userId: guard.user.id,
+        subjectId,
       })
       .returning();
 

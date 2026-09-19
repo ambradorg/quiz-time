@@ -761,6 +761,7 @@ const snapshotToPayload = (deck: OfflineDeck, offline: boolean): OfflineDeckPayl
     summary: deck.summary,
     sourceType: deck.sourceType,
     createdAt: deck.createdAt,
+    subjectId: deck.subjectId ?? null,
   },
   cards: deck.cards,
   progress: deck.progress,
