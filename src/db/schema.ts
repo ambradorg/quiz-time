@@ -256,3 +256,44 @@ export type Flashcard = typeof flashcards.$inferSelect;
 export type CardProgress = typeof cardProgress.$inferSelect;
 export type StudyResult = typeof studyResults.$inferSelect;
 export type CardReview = typeof cardReviews.$inferSelect;
+
+/** Push is strictly opt-in. Times are wall-clock times in an IANA zone. */
+export const notificationPreferences = pgTable("notification_preferences", {
+  userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade", onUpdate: "cascade" }),
+  enabled: boolean("enabled").notNull().default(false),
+  reminderTime: text("reminder_time").notNull().default("19:00"),
+  timeZone: text("time_zone").notNull().default("UTC"),
+  lastActiveAt: timestamp("last_active_at", { withTimezone: true }),
+});
+
+export const pushSubscriptions = pgTable("push_subscriptions", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade", onUpdate: "cascade" }),
+  endpoint: text("endpoint").notNull().unique(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastTestAt: timestamp("last_test_at", { withTimezone: true }),
+}, (t) => [index("push_subscriptions_user_idx").on(t.userId)]);
+
+/** One daily reminder per account/local date, also visible in the inbox. */
+export const notifications = pgTable("notifications", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade", onUpdate: "cascade" }),
+  localDate: text("local_date").notNull(),
+  dueCount: integer("due_count").notNull(),
+  readAt: timestamp("read_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("notifications_user_day_key").on(t.userId, t.localDate), index("notifications_user_created_idx").on(t.userId, t.createdAt)]);
+
+/** Durable per-device outbox: leases prevent concurrent cron sends. */
+export const pushDeliveries = pgTable("push_deliveries", {
+  id: serial("id").primaryKey(),
+  notificationId: integer("notification_id").notNull().references(() => notifications.id, { onDelete: "cascade" }),
+  subscriptionId: integer("subscription_id").notNull().references(() => pushSubscriptions.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+}, (t) => [uniqueIndex("push_deliveries_notice_device_key").on(t.notificationId, t.subscriptionId), index("push_deliveries_pending_idx").on(t.status, t.nextAttemptAt)]);
