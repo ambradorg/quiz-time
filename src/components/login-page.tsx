@@ -275,7 +275,7 @@ export function LoginPage({
         )}
       </div>
 
-      <p className="login-developer">Developed by: John Lloyd Ambrad</p>
+      <p className="login-developer">Developed by: FBC BSIT 3-A</p>
     </main>
   );
 }
