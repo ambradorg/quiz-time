@@ -14,6 +14,8 @@
     "test:openrouter": "tsx scripts/openrouter.test.mjs",
     "test:scan": "tsx --experimental-test-module-mocks scripts/scan-fallback.test.mjs",
     "test:srs": "tsx --test scripts/srs.test.mjs",
+    "test:notifications": "tsx --test scripts/notifications.test.mjs",
+    "test:reminders-e2e": "node scripts/reminders-e2e.mjs",
     "test:offline": "tsx --test scripts/offline.test.mjs scripts/offline-client.test.mjs",
     "test:presence": "tsx --test scripts/presence.test.mjs",
     "test:db-errors": "tsx --test scripts/db-errors.test.mjs",
@@ -34,7 +36,8 @@
     "pdfjs-dist": "^6.3.289",
     "pg": "8.20.0",
     "react": "19.2.6",
-    "react-dom": "19.2.6"
+    "react-dom": "19.2.6",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
@@ -45,6 +48,7 @@
     "@types/pg": "8.18.0",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
+    "@types/web-push": "^3.6.4",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",

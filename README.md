@@ -636,6 +636,91 @@ CREATE INDEX IF NOT EXISTS "user_presence_last_seen_idx" ON "user_presence" USIN
 To see the roster without waiting for real users, open `/clay-preview` — it
 renders the same components with sample data, no sign-in needed.
 
+## Notifications (daily review reminders)
+
+A quiet, opt-in nudge when cards are due — **inside** the app (the bell's
+inbox) and, if the student opts in, **outside** it (a web push notification
+on their lock screen, even with QuizTime closed).
+
+- One reminder per day, at the student's chosen local time, only when cards
+  are actually due. Nothing is ever sent during a quiz.
+- Strictly opt-in: the switch appears only after the browser grants
+  permission and registers a push subscription. No permission prompt on
+  first visit, ever.
+- The inbox (bell → notification center) also keeps one row per reminded day,
+  so "what was due yesterday" stays answerable in-app.
+- iPhone/iPad: web push needs the PWA added to the Home Screen first (iOS
+  16.4+); the panel says so.
+
+### How it works
+
+1. The bell's panel (`src/components/notification-center.tsx`) asks for
+   permission, subscribes via the service worker, and POSTs the subscription
+   to `/api/notifications/subscribe`.
+2. A scheduler knocks on `/api/cron/reminders` every 10 minutes —
+   `.github/workflows/reminders-cron.yml` on Vercel Hobby (Hobby's own cron
+   is daily-only), or `vercel.json`'s `crons` entry on Pro. Each run finds
+   users with due cards whose local clock is inside their reminder window
+   (`src/lib/notifications.ts` → `reminderWindow`), writes **one** inbox row
+   per (user, local day) — the unique key is the dedupe — and queues a
+   delivery per device.
+3. The same run drains the delivery queue with row leases + bounded retries
+   (5 min, 10 min, then give up). Endpoints the push service reports gone
+   (404/410) are pruned automatically.
+4. `public/sw.js` shows the push and, on tap, focuses/opens a tab on
+   `/?tab=review`, which the app consumes into the Review tab.
+
+Preferences live in `notification_preferences` (enabled, reminder time, IANA
+time zone); devices in `push_subscriptions`; the once-per-day guard in
+`notifications`; send state in `push_deliveries`.
+
+### API
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/notifications` | inbox, unread count, preferences, push status |
+| `PATCH /api/notifications` | `{ enabled?, reminderTime?, timeZone?, markRead?: "all" \| number[] }` |
+| `POST /api/notifications/subscribe` | register this browser's push subscription |
+| `DELETE /api/notifications/subscribe` | forget this browser (last device off ⇒ enabled off) |
+| `POST /api/notifications/test` | one test push to the account's devices |
+| `GET/POST /api/cron/reminders` | cron tick; `Authorization: Bearer $CRON_SECRET` |
+
+Manual cron tick while developing:
+
+```sh
+curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/reminders
+```
+
+### Setup (env)
+
+```sh
+npx web-push generate-vapid-keys   # paste into VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY
+openssl rand -hex 32               # CRON_SECRET
+```
+
+`VAPID_SUBJECT` is a contact (`mailto:you@example.com`). Without the VAPID
+vars the inbox still works and the panel explains push isn't configured —
+the feature degrades, never breaks.
+
+### Production migration (Supabase)
+
+Apply `drizzle/0008_push_notifications.sql` in the SQL editor (run it once),
+or `npm run db:migrate` against the database. Then set the four env vars
+above and make sure something calls the route every ~10 minutes:
+
+- **Vercel Hobby (default here):** the GitHub Actions workflow
+  `.github/workflows/reminders-cron.yml` is the scheduler. Set the repo
+  **secret** `CRON_SECRET` (same value as the Vercel env var) and the repo
+  **variable** `CRON_URL` (your deployment origin, e.g.
+  `https://quiz-time.vercel.app`). Scheduled runs begin once the workflow
+  is on the default branch; the Actions tab can trigger a manual tick
+  anytime.
+- **Vercel Pro:** you may instead add back a `crons` entry in `vercel.json`
+  (`"schedule": "*/10 * * * *"`); the inbox dedupe makes overlapping
+  schedulers harmless.
+- **Other hosts:** any cron that calls the route with
+  `Authorization: Bearer $CRON_SECRET` works.
+
 ## Study Stats & Progress (P2)
 
 Every card answered in **Study mode** ("Got it / Still learning") and **Exam

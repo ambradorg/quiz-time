@@ -1,0 +1,50 @@
+# Scheduler for /api/cron/reminders.
+#
+# Vercel Hobby only allows *daily* cron jobs, but per-user reminder times need
+# the server to check in several times an hour — so the schedule lives here
+# instead (public repo → free Actions minutes). The endpoint stays on Vercel;
+# this workflow just knocks on it every 10 minutes with the bearer secret.
+#
+# Setup (once, in the GitHub repo):
+#   - secret CRON_SECRET   — the same value as the CRON_SECRET env var on Vercel
+#                            (openssl rand -hex 32)
+#   - variable CRON_URL    — the deployment's origin, e.g. https://quiz-time.vercel.app
+#
+# Until both exist the job skips with a warning instead of failing.
+# Scheduled runs only start once this file is on the default branch (merged);
+# "Run workflow" in the Actions tab triggers a manual tick anytime.
+name: reminders-cron
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger the reminder cron
+        env:
+          CRON_URL: ${{ vars.CRON_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::warning::CRON_URL (repo variable) and/or CRON_SECRET (repo secret) are not set — skipping this tick."
+            exit 0
+          fi
+          for attempt in 1 2 3; do
+            code="$(curl -sS -o /tmp/cron.json -w '%{http_code}' \
+              -H "Authorization: Bearer $CRON_SECRET" \
+              "$CRON_URL/api/cron/reminders" || echo 000)"
+            echo "attempt $attempt → HTTP $code"
+            cat /tmp/cron.json 2>/dev/null || true
+            echo
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 20
+          done
+          echo "::error::reminder cron never returned 200"
+          exit 1

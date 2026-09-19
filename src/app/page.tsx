@@ -42,6 +42,8 @@ import { useOfflineIdentity, useOnlineStatus, useOutbox } from "@/lib/use-offlin
 import { usePresenceHeartbeat } from "@/lib/use-presence";
 import { MascotHost } from "@/components/hamster-mascot";
 import { CoursePickerModal } from "@/components/course-picker";
+import NotificationCenter from "@/components/notification-center";
+import { useNotifications } from "@/lib/use-notifications";
 import { mascotEvent, mascotSay } from "@/lib/mascot";
 import {
   OfflineBadge,
@@ -66,6 +68,7 @@ import {
 import {
   ArrowLeft,
   ArrowRight,
+  Bell,
   BookBookmark,
   Brain,
   CalendarClock,
@@ -7138,6 +7141,9 @@ export default function App() {
   const [reviewDeckId, setReviewDeckId] = useState<number | null>(null);
   const [dueCount, setDueCount] = useState(0);
 
+  // Notification center: what the top-bar bell opens (inbox + push opt-in).
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+
   // Sign-in state (Auth.js). `data` is null while unauthenticated — and also
   // while offline, which is why the identity falls back to the cached profile
   // (`useOfflineIdentity`) so "open my account offline" works.
@@ -7146,6 +7152,7 @@ export default function App() {
   const identity = useOfflineIdentity({ user: session?.user ?? null, status });
   const user = identity.user;
   const signedIn = Boolean(user?.id);
+  const notifications = useNotifications({ enabled: signedIn && online });
 
   // ── Course (course-tailored flashcards) ────────────────────────────────────
   // The student's course ("BS Pharmacy", or anything they typed). `undefined`
@@ -7334,6 +7341,23 @@ export default function App() {
 
   useEffect(() => {
     bindConnectivityListeners();
+  }, []);
+
+  // Deep link from push taps: the service worker's notificationclick opens
+  // `/?tab=review`, which should land on the review queue — not Home. The
+  // param is consumed (history.replaceState) so back/refresh behave normally.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const target = params.get("tab");
+    if (!target) return;
+    const tabs: Tab[] = ["home", "upload", "sessions", "review", "stats"];
+    // Consuming the deep link is a one-time URL→state sync on mount; the
+    // rule flags any setState in an effect body, even this intentional one.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (tabs.includes(target as Tab)) setTab(target as Tab);
+    params.delete("tab");
+    const rest = params.toString();
+    window.history.replaceState({}, "", rest ? `?${rest}` : window.location.pathname);
   }, []);
 
   // Held in a ref so the drain effect can depend on `online` alone (depending
@@ -7800,6 +7824,25 @@ export default function App() {
           <p className="app-developer">Developed by: FBC BSIT 3-A</p>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+          {signedIn && (
+            <button
+              className="nc-bell"
+              onClick={() => setNotificationsOpen(true)}
+              aria-haspopup="dialog"
+              aria-label={
+                (notifications.inbox?.unread ?? 0) > 0
+                  ? `Notifications, ${notifications.inbox?.unread} unread`
+                  : "Notifications"
+              }
+            >
+              <Bell size={17} />
+              {(notifications.inbox?.unread ?? 0) > 0 && (
+                <span className="nc-bell-badge">
+                  {(notifications.inbox?.unread ?? 0) > 9 ? "9+" : notifications.inbox?.unread}
+                </span>
+              )}
+            </button>
+          )}
           {/* Offline badge + "N answers waiting to sync" (tap to sync now). */}
           <OfflineChip
             online={online}
@@ -7907,6 +7950,14 @@ export default function App() {
           onSkip={handleSkipCourse}
         />
       )}
+
+      {/* Notification center sheet: inbox + daily push reminder opt-in. */}
+      <NotificationCenter
+        open={notificationsOpen}
+        onClose={() => setNotificationsOpen(false)}
+        onOpenReview={() => setTab("review")}
+        notifications={notifications}
+      />
 
       <ToastHost />
       {/* Nibbles 🐹 — floating study buddy (greets on login, tours first-timers,

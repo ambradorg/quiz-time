@@ -311,6 +311,53 @@ self.addEventListener("message", (event) => {
   }
 });
 
+// ── Push notifications (review reminders) ───────────────────────────────────
+// The server (/api/cron/reminders) sends { title, body, url, tag,
+// notificationId }. Showing the notification ourselves (rather than letting
+// the push service default) keeps the icon, tag and click target on-brand.
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { body: event.data ? event.data.text() : "" };
+  }
+  const title = typeof data.title === "string" && data.title ? data.title : "QuizTime";
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: typeof data.body === "string" ? data.body : "You have cards waiting for review.",
+      icon: "/images/logo.png",
+      badge: "/images/logo.png",
+      tag: typeof data.tag === "string" ? data.tag : "quiztime-review",
+      data: { url: typeof data.url === "string" ? data.url : "/" },
+      requireInteraction: false,
+    })
+  );
+});
+
+// Tap → open (or reuse) a QuizTime tab on the review queue. Reusing an open
+// tab means the nudge never stacks windows behind the one already studying.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || "/";
+  event.waitUntil(
+    (async () => {
+      const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      for (const client of clients) {
+        if (new URL(client.url).pathname === new URL(url, self.location.origin).pathname && "focus" in client) {
+          client.navigate(url);
+          return client.focus();
+        }
+      }
+      if (clients.length > 0 && "focus" in clients[0]) {
+        clients[0].navigate(url);
+        return clients[0].focus();
+      }
+      return self.clients.openWindow(url);
+    })()
+  );
+});
+
 // ── Fetch routing ───────────────────────────────────────────────────────────
 self.addEventListener("fetch", (event) => {
   const request = event.request;
