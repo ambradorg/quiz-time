@@ -27,6 +27,34 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+/**
+ * Subject folders — an optional organisational layer above study sets.
+ *
+ * A subject is just a named bucket owned by one user; decks point at one with
+ * `study_sessions.subject_id`. Deleting a subject leaves its decks in place
+ * (the FK is `ON DELETE SET NULL`) — filing is metadata, never ownership.
+ */
+export const subjects = pgTable(
+  "subjects",
+  {
+    id: serial("id").primaryKey(),
+    /** Owner — every read/write is scoped to this column. */
+    userId: text("user_id").notNull().references(() => users.id, {
+      onDelete: "cascade",
+      onUpdate: "cascade",
+    }),
+    /** Display name, unique per account so the picker list stays unambiguous. */
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    // Two subjects with the same name for one user would make "move to
+    // subject" ambiguous — the upsert-friendly key keeps them canonical.
+    uniqueIndex("subjects_user_name_key").on(table.userId, table.name),
+    index("subjects_user_id_idx").on(table.userId),
+  ]
+);
+
 export const studySessions = pgTable(
   "study_sessions",
   {
@@ -47,6 +75,14 @@ export const studySessions = pgTable(
     userId: text("user_id").references(() => users.id, {
       onDelete: "cascade",
       onUpdate: "cascade",
+    }),
+    /**
+     * Optional subject folder this set is filed under (see `subjects`).
+     * Null = the set lives directly in "All Sets". `ON DELETE SET NULL`
+     * so removing a folder never deletes the sets inside it.
+     */
+    subjectId: integer("subject_id").references(() => subjects.id, {
+      onDelete: "set null",
     }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
@@ -214,6 +250,7 @@ export const studyResults = pgTable(
 );
 
 export type User = typeof users.$inferSelect;
+export type Subject = typeof subjects.$inferSelect;
 export type StudySession = typeof studySessions.$inferSelect;
 export type Flashcard = typeof flashcards.$inferSelect;
 export type CardProgress = typeof cardProgress.$inferSelect;

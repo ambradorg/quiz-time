@@ -23,6 +23,10 @@ QuizTime turns them into flashcards, then lets you review them four ways:
 - **Deck Editing** – rename any deck, add / edit / delete / reorder its cards,
   or build a **manual deck** from scratch (no AI, no upload) — see
   [Deck editing](#deck-editing).
+- **Subject Folders** – group study sets into subjects (Biology, History…):
+  search everything from one box, open a folder to see just its sets, create
+  sets straight inside a folder, or move sets between folders with the sheet —
+  see [Subject folders](#subject-folders).
 - **Offline Study** – save your sets to the device and open them with no signal
   at all: the account, all four study modes, progress and the spaced-repetition
   queue keep working, and everything you answer syncs when you're back online —
@@ -68,6 +72,45 @@ Every deck is editable after the fact, and decks can also be created by hand:
 
 E2E coverage for all of the above lives in `scripts/deck-editor.test.mjs`
 (`npm run test:deck-editor`, same requirements as `npm run test:e2e`).
+
+## Subject folders
+
+My Study Sets gains an optional organisational layer above the flat deck
+list: **subject folders** (think "Biology", "World History"). The screen has
+three parts:
+
+- **Search** – the box under the title filters *both* subjects (by name) and
+  sets (by title) as you type, so a big library never needs scrolling.
+- **Subjects** – full-width folder rows (icon, name, live set count), styled
+  exactly like the deck rows below them. Tap one to open the subject page:
+  the same deck rows you know, filtered to that folder, plus a **+ New Set**
+  button and an **Add set manually** row that create decks *already filed in
+  the folder*. The subject page's pencil renames the folder; the trash deletes
+  the **folder only** — its sets drop back to All Sets, never deleted.
+- **All Sets** – every deck, filed or not. Each row has a small folder button
+  opening the **Move to Subject** sheet: pick a folder, create one on the
+  spot, or "Unfile" to bring the set back out.
+
+Rules the API enforces (`/api/subjects`, `subjectId` on `/api/sessions`):
+
+- A set lives in **at most one** subject (`study_sessions.subject_id`,
+  nullable FK, `ON DELETE SET NULL`).
+- Subject names are unique per account, **case-insensitively** ("Biology" vs
+  "biology" gets a friendly 409, not a near-duplicate folder).
+- Every subject/deck write is scoped to the signed-in user; a foreign folder
+  is indistinguishable from a missing one (404).
+
+Moving, creating and renaming need a connection (like deck editing). The
+`subjectId` is part of the offline deck snapshot and the cached lists, so the
+grouping still renders offline — it just can't be changed without a network.
+
+A wire-protocol server for the embedded Postgres (PGlite) lives in
+`scripts/dev-pglite-server.mjs` — handy when no real Postgres is installed:
+
+```bash
+node scripts/dev-pglite-server.mjs 5433 &
+DATABASE_URL=postgresql://postgres@127.0.0.1:5433/quiztime npm run db:migrate
+```
 
 ## Requirements
 

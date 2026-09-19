@@ -96,7 +96,10 @@ import {
   Files,
   Flag,
   Flame,
+  Folder,
+  FolderInput,
   FolderOpen,
+  FolderPlus,
   GraduationCap,
   Heart,
   House,
@@ -118,6 +121,7 @@ import {
   Presentation,
   RefreshCw,
   Save,
+  Search,
   Settings,
   Share,
   Shuffle,
@@ -156,12 +160,23 @@ interface StudySession {
   title: string;
   sourceType: string;
   createdAt: string;
+  /** Subject folder this set is filed under (null/absent = All Sets only). */
+  subjectId?: number | null;
   cardCount: number;
   knownCount?: number;
   /** Cards waiting in the spaced-repetition queue right now. */
   dueCount?: number;
   /** Cards with a review schedule at all. */
   trackedCount?: number;
+}
+
+/** A subject folder (see /api/subjects) — an optional grouping above sets. */
+interface Subject {
+  id: number;
+  name: string;
+  createdAt: string;
+  /** How many study sets are filed inside (from the API's grouped count). */
+  setCount: number;
 }
 
 type Tab = "home" | "upload" | "quiz" | "sessions" | "stats" | "review";
@@ -4239,6 +4254,958 @@ function QuizPage({
   );
 }
 
+// ─── Subjects (folders) + shared deck row ────────────────────────────────────
+
+/** "Just now / 3h ago / Yesterday / Jun 4" — used by every list row. */
+function formatRelativeDate(d: string) {
+  const date = new Date(d);
+  const now = new Date();
+  const diff = now.getTime() - date.getTime();
+  const hours = diff / 3600000;
+  if (hours < 1) return "Just now";
+  if (hours < 24) return `${Math.floor(hours)}h ago`;
+  if (hours < 48) return "Yesterday";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+/** Last-known subject list, so the folders still render on an offline boot. */
+const SUBJECTS_CACHE_KEY = "quiztime:subjects";
+
+function cacheSubjectsLocally(subjects: Subject[]) {
+  try {
+    window.localStorage.setItem(SUBJECTS_CACHE_KEY, JSON.stringify(subjects));
+  } catch {
+    /* storage blocked — subjects just won't render offline */
+  }
+}
+
+async function readCachedSubjects(): Promise<Subject[]> {
+  try {
+    const raw = window.localStorage.getItem(SUBJECTS_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Subject[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Folder-icon tints, cycled by subject id so folders feel colour-coded. */
+const SUBJECT_FOLDER_TINTS = [
+  { bg: "linear-gradient(135deg, #dbeafe, #e0e7ff)", color: "#1d4ed8" },
+  { bg: "linear-gradient(135deg, #ede9fe, #f3e8ff)", color: "#6d28d9" },
+  { bg: "linear-gradient(135deg, #d1fae5, #ecfdf5)", color: "#047857" },
+  { bg: "linear-gradient(135deg, #ffe4e6, #fff1f2)", color: "#be123c" },
+  { bg: "linear-gradient(135deg, #fef9c3, #fef3c7)", color: "#a16207" },
+  { bg: "linear-gradient(135deg, #cffafe, #e0f2fe)", color: "#0e7490" },
+];
+
+const subjectTint = (id: number) => SUBJECT_FOLDER_TINTS[Math.abs(id) % SUBJECT_FOLDER_TINTS.length];
+
+/**
+ * A small clay dialog that asks for a name — used by "New Subject" and
+ * "Rename subject". Enter submits; the confirm button shows a spinner while
+ * the request is in flight.
+ */
+function NameModal({
+  title,
+  label,
+  placeholder,
+  confirmLabel,
+  initial = "",
+  busy,
+  onClose,
+  onConfirm,
+}: {
+  title: string;
+  label: string;
+  placeholder?: string;
+  confirmLabel: string;
+  initial?: string;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: (name: string) => void;
+}) {
+  const [value, setValue] = useState(initial);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  const submit = () => {
+    const name = value.trim();
+    if (name && !busy) onConfirm(name);
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 90,
+        background: "rgba(16,35,63,0.45)",
+        backdropFilter: "blur(3px)",
+        WebkitBackdropFilter: "blur(3px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+      }}
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        className="glass-card animate-slide-up"
+        style={{ width: "100%", maxWidth: 360, padding: "20px 18px" }}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
+        <h3 style={{ margin: "0 0 4px", fontSize: 17, fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>
+          <FolderPlus size={18} aria-hidden style={{ color: "#1d4ed8" }} />
+          {title}
+        </h3>
+        <p style={{ margin: "0 0 14px", fontSize: 13, color: "var(--text-muted)" }}>
+          {label}
+        </p>
+        <input
+          ref={inputRef}
+          className="type-input"
+          value={value}
+          maxLength={60}
+          placeholder={placeholder}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+            if (e.key === "Escape") onClose();
+          }}
+          aria-label={label}
+          style={{ marginBottom: 14 }}
+        />
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button className="btn btn-ghost btn-sm" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button className="btn btn-primary btn-sm" onClick={submit} disabled={busy || !value.trim()}>
+            {busy ? "..." : (
+              <>
+                <FolderPlus />
+                {confirmLabel}
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The "Move to Subject" bottom sheet: file a study set into a folder (or
+ * unfile it). Subjects are listed with their live set counts; creating a new
+ * subject inline files the set straight into it.
+ */
+function MoveSheet({
+  session,
+  online,
+  onClose,
+  onMoved,
+}: {
+  session: StudySession;
+  online: boolean;
+  onClose: () => void;
+  /** Called after a successful move (the parent refreshes its lists). */
+  onMoved: (subjectId: number | null) => void;
+}) {
+  const [subjects, setSubjects] = useState<Subject[] | null>(null);
+  const [selected, setSelected] = useState<number | null>(session.subjectId ?? null);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const data = await fetchJson<{ subjects: Subject[] }>("/api/subjects", {
+          signal: controller.signal,
+        });
+        if (!controller.signal.aborted) setSubjects(data.subjects ?? []);
+      } catch {
+        if (!controller.signal.aborted) {
+          showToast("Couldn't load your subjects", CircleX);
+          setSubjects([]);
+        }
+      }
+    })();
+    return () => controller.abort();
+  }, []);
+
+  const applyMove = async (targetSubjectId: number | null, label: string) => {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/sessions/${session.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subjectId: targetSubjectId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to move set");
+      showToast(label, FolderInput);
+      onMoved(targetSubjectId);
+    } catch (err) {
+      showToast(err instanceof Error && err.message ? err.message : "Failed to move set", CircleX);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Create a subject inline and select it immediately. */
+  const handleCreate = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/subjects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to create subject");
+      const subject = data.subject as Subject;
+      setSubjects((prev) => [...(prev ?? []), subject]);
+      setSelected(subject.id);
+      setCreating(false);
+      setNewName("");
+      showToast(`Subject “${subject.name}” created`, FolderPlus);
+    } catch (err) {
+      showToast(err instanceof Error && err.message ? err.message : "Failed to create subject", CircleX);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unchanged = selected === (session.subjectId ?? null);
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 80,
+        background: "rgba(16,35,63,0.45)",
+        backdropFilter: "blur(3px)",
+        WebkitBackdropFilter: "blur(3px)",
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "center",
+      }}
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        className="animate-slide-up"
+        style={{
+          width: "100%",
+          maxWidth: 520,
+          maxHeight: "80vh",
+          overflowY: "auto",
+          background: "var(--card)",
+          borderRadius: "26px 26px 0 0",
+          padding: "12px 18px calc(20px + env(safe-area-inset-bottom))",
+          boxShadow: "0 -12px 30px rgba(43,80,180,0.25)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Move ${session.title} to a subject`}
+      >
+        <div style={{ width: 40, height: 5, borderRadius: 999, background: "#dbe4f2", margin: "2px auto 14px" }} aria-hidden />
+        <h3 style={{ margin: "0 0 14px", fontSize: 17, fontWeight: 800, textAlign: "center" }}>
+          Move <span style={{ color: "#1d4ed8" }}>“{session.title}”</span> to…
+        </h3>
+
+        {subjects === null ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="shimmer" style={{ height: 56, borderRadius: 16 }} />
+            ))}
+          </div>
+        ) : subjects.length === 0 && !creating ? (
+          <p style={{ margin: "0 0 14px", fontSize: 13, color: "var(--text-muted)", textAlign: "center" }}>
+            You have no subject folders yet — create your first one below.
+          </p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+            {subjects.map((subject) => {
+              const tint = subjectTint(subject.id);
+              const isSelected = selected === subject.id;
+              const isCurrent = (session.subjectId ?? null) === subject.id;
+              return (
+                <button
+                  key={subject.id}
+                  onClick={() => setSelected(subject.id)}
+                  className="glass-card"
+                  style={{
+                    padding: "12px 14px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    width: "100%",
+                    font: "inherit",
+                    color: "var(--text)",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    border: isSelected ? "2px solid var(--blue)" : "2px solid transparent",
+                    background: isSelected ? "#eff6ff" : undefined,
+                  }}
+                  aria-pressed={isSelected}
+                >
+                  <span
+                    aria-hidden
+                    style={{
+                      width: 38,
+                      height: 38,
+                      borderRadius: 11,
+                      background: tint.bg,
+                      color: tint.color,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Folder size={20} strokeWidth={1.8} />
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block", fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {subject.name}
+                    </span>
+                    <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                      {subject.setCount} set{subject.setCount === 1 ? "" : "s"}
+                      {isCurrent ? " · current" : ""}
+                    </span>
+                  </span>
+                  {isSelected && (
+                    <span aria-hidden style={{ color: "#1d4ed8", display: "flex", flexShrink: 0 }}>
+                      <CircleCheckBig size={20} />
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {creating ? (
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            <input
+              className="type-input"
+              autoFocus
+              value={newName}
+              maxLength={60}
+              placeholder="New subject name"
+              aria-label="New subject name"
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void handleCreate();
+                if (e.key === "Escape") setCreating(false);
+              }}
+              style={{ flex: 1, padding: "10px 14px", fontSize: 14 }}
+            />
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => void handleCreate()}
+              disabled={busy || !newName.trim()}
+              style={{ flexShrink: 0 }}
+            >
+              {busy ? "..." : "Add"}
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setCreating(false)} disabled={busy} style={{ flexShrink: 0 }}>
+              <X />
+            </button>
+          </div>
+        ) : (
+          <button
+            className="glass-card"
+            onClick={() => setCreating(true)}
+            style={{
+              width: "100%",
+              padding: "12px 14px",
+              marginBottom: 14,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              font: "inherit",
+              color: "#1d4ed8",
+              fontWeight: 700,
+              fontSize: 14,
+              background: "#eff6ff",
+              border: "2px dashed #93c5fd",
+              cursor: "pointer",
+            }}
+          >
+            <FolderPlus size={18} aria-hidden />
+            Create new subject
+          </button>
+        )}
+
+        <div style={{ display: "flex", gap: 10 }}>
+          {(session.subjectId ?? null) !== null && (
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => void applyMove(null, "Removed from subject")}
+              disabled={busy || !online}
+              style={{ flex: 1, color: "#f43f5e" }}
+            >
+              <FolderOpen />
+              Unfile
+            </button>
+          )}
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={() => {
+              const target = subjects?.find((s) => s.id === selected);
+              void applyMove(selected, target ? `Moved to “${target.name}”` : "Set moved");
+            }}
+            disabled={busy || !online || unchanged || selected === null}
+            style={{ flex: 2 }}
+          >
+            {busy ? "..." : (
+              <>
+                <FolderInput />
+                Move here
+              </>
+            )}
+          </button>
+        </div>
+        {!online && (
+          <p style={{ margin: "10px 0 0", fontSize: 12, color: "#9f1239", textAlign: "center", fontWeight: 600 }}>
+            You&apos;re offline — moving sets needs a connection.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One study-set row — the exact card used by "My Study Sets" and the subject
+ * pages, so both lists always look and behave the same. Tap to study; the
+ * side buttons pin offline, jump to review, edit, move to a subject, delete.
+ */
+function DeckRow({
+  session,
+  index,
+  online,
+  deleting,
+  offlineBusy,
+  offlineDecks,
+  onOpen,
+  onReviewDeck,
+  onEditDeck,
+  onDelete,
+  onToggleOffline,
+  onMove,
+}: {
+  session: StudySession;
+  index: number;
+  online: boolean;
+  /** Deck currently being deleted (spinner in the trash button). */
+  deleting: number | null;
+  offlineBusy: boolean;
+  offlineDecks: Map<number, string>;
+  onOpen: (id: number) => void;
+  onReviewDeck: (id: number) => void;
+  onEditDeck: (id: number) => void;
+  onDelete: (id: number, e: React.MouseEvent) => void;
+  onToggleOffline: (id: number, saved: boolean) => void;
+  /** Open the "Move to subject" sheet — the little folder button. */
+  onMove: (session: StudySession) => void;
+}) {
+  return (
+    <div
+      className="glass-card animate-fade-in"
+      style={{
+        padding: "16px",
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+        animationDelay: `${index * 0.05}s`,
+        transition: "transform 0.15s",
+      }}
+      onClick={() =>
+        offlineDecks.has(session.id) || online
+          ? onOpen(session.id)
+          : showToast("This set isn't saved on this device yet", CloudOff)
+      }
+      onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.98)")}
+      onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
+      onTouchStart={(e) => (e.currentTarget.style.transform = "scale(0.98)")}
+      onTouchEnd={(e) => (e.currentTarget.style.transform = "scale(1)")}
+    >
+      <div style={{
+        width: 52,
+        height: 52,
+        borderRadius: 14,
+        background: "linear-gradient(135deg, #e0f2fe, #eef2ff)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 26,
+        flexShrink: 0,
+      }}>
+        <SourceTypeIcon type={session.sourceType} size={26} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ margin: "0 0 3px", fontWeight: 700, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {session.title}
+        </p>
+        <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <span>
+            {session.cardCount} card{session.cardCount === 1 ? "" : "s"} · {formatRelativeDate(session.createdAt)}
+          </span>
+          {typeof session.knownCount === "number" && (
+            <span
+              className="badge"
+              style={{
+                background: session.knownCount >= session.cardCount && session.cardCount > 0 ? "#d1fae5" : "#dbeafe",
+                color: session.knownCount >= session.cardCount && session.cardCount > 0 ? "#047857" : "#1d4ed8",
+              }}
+            >
+              {session.knownCount >= session.cardCount && session.cardCount > 0
+                ? "All known"
+                : `${session.knownCount}/${session.cardCount} known`}
+            </span>
+          )}
+          {typeof session.dueCount === "number" && session.dueCount > 0 && (
+            <span className="badge" style={{ background: "#ffe4e6", color: "#9f1239" }}>
+              {session.dueCount} due
+            </span>
+          )}
+          {offlineDecks.has(session.id) && (
+            <OfflineBadge savedAt={offlineDecks.get(session.id)} />
+          )}
+        </p>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+        <OfflinePinButton
+          title={session.title}
+          saved={offlineDecks.has(session.id)}
+          busy={offlineBusy}
+          onToggle={() =>
+            onToggleOffline(session.id, offlineDecks.has(session.id))
+          }
+        />
+        {Boolean(session.dueCount) && (
+          <button
+            className="btn btn-primary btn-sm"
+            style={{ padding: "6px 10px" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onReviewDeck(session.id);
+            }}
+            aria-label={`Review ${session.dueCount} due cards in ${session.title}`}
+          >
+            <Brain />
+          </button>
+        )}
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ padding: "6px", color: "#1d4ed8" }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onMove(session);
+          }}
+          aria-label={`Move ${session.title} to a subject`}
+          title="Move to subject"
+        >
+          <FolderInput />
+        </button>
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ padding: "6px", opacity: online ? 1 : 0.5 }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onEditDeck(session.id);
+          }}
+          aria-label={`Edit ${session.title}`}
+        >
+          <Pencil />
+        </button>
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ padding: "6px", color: "#f43f5e", opacity: deleting === session.id ? 0.5 : 1 }}
+          onClick={(e) => onDelete(session.id, e)}
+          disabled={deleting === session.id}
+          aria-label={`Delete ${session.title}`}
+        >
+          <Trash />
+        </button>
+        <ArrowRight aria-hidden />
+      </div>
+    </div>
+  );
+}
+
+// ─── Subject Page (the sets inside one subject folder) ───────────────────────
+function SubjectPage({
+  subject,
+  online,
+  syncToken,
+  offlineBusy,
+  onToggleOffline,
+  onOfflineChanged,
+  onOpen,
+  onReviewDeck,
+  onEditDeck,
+  onCreateSet,
+  onBack,
+  onRenamed,
+}: {
+  subject: { id: number; name: string };
+  online: boolean;
+  syncToken: number;
+  offlineBusy: boolean;
+  onToggleOffline: (id: number, saved: boolean) => void;
+  onOfflineChanged: () => void;
+  onOpen: (id: number) => void;
+  onReviewDeck: (id: number) => void;
+  onEditDeck: (id: number) => void;
+  /** Open the deck editor pre-filed into this subject. */
+  onCreateSet: () => void;
+  onBack: () => void;
+  /** The subject was renamed — the parent updates its header state. */
+  onRenamed: (name: string) => void;
+}) {
+  const [sessions, setSessions] = useState<StudySession[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState<number | null>(null);
+  const [deletingSubject, setDeletingSubject] = useState(false);
+  const [offlineDecks, setOfflineDecks] = useState<Map<number, string>>(new Map());
+  const [fromCache, setFromCache] = useState(false);
+  const [moveSheet, setMoveSheet] = useState<StudySession | null>(null);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+
+  const refreshOfflineDecks = useCallback(async () => {
+    const decks = await readDecks();
+    setOfflineDecks(new Map(decks.map((deck) => [deck.id, deck.savedAt])));
+  }, []);
+
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      setLoading(true);
+      try {
+        const data = await fetchJson<{ sessions: StudySession[] }>(
+          "/api/sessions",
+          signal ? { signal } : undefined
+        );
+        if (signal?.aborted) return;
+        setSessions((data.sessions || []).filter((s) => s.subjectId === subject.id));
+        setFromCache(false);
+        void refreshOfflineDecks();
+      } catch (error) {
+        if (signal?.aborted) return;
+        if (error instanceof HttpError) {
+          showToast("Failed to load this subject's sets", CircleX);
+          return;
+        }
+        const rows = await loadOfflineSessionList();
+        if (signal?.aborted) return;
+        setSessions(rows.filter((s) => s.subjectId === subject.id));
+        setFromCache(true);
+        await refreshOfflineDecks();
+      } finally {
+        if (!signal?.aborted) setLoading(false);
+      }
+    },
+    [refreshOfflineDecks, subject.id]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      await load(controller.signal);
+    })();
+    return () => controller.abort();
+  }, [load, syncToken]);
+
+  const handleDelete = async (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!online) {
+      showToast("Deleting needs a connection", CloudOff);
+      return;
+    }
+    if (!confirm("Delete this study set?")) return;
+    setDeleting(id);
+    try {
+      const res = await fetch(`/api/sessions/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await forgetDeckOffline(id);
+      setSessions((prev) => prev.filter((s) => s.id !== id));
+      showToast("Deleted!", Trash);
+      onOfflineChanged();
+    } catch {
+      showToast("Failed to delete", CircleX);
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const handleEdit = (id: number) => {
+    if (!online) {
+      showToast("Editing sets needs a connection", CloudOff);
+      return;
+    }
+    onEditDeck(id);
+  };
+
+  const handleOpen = (id: number) => {
+    if (offlineDecks.has(id) || online) {
+      onOpen(id);
+    } else {
+      showToast("This set isn't saved on this device yet", CloudOff);
+    }
+  };
+
+  /** Rename the folder itself (the sets inside are untouched). */
+  const handleRename = async (name: string) => {
+    setRenaming(true);
+    try {
+      const res = await fetch(`/api/subjects/${subject.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to rename subject");
+      setRenameOpen(false);
+      onRenamed(data.subject.name);
+      showToast("Subject renamed", CircleCheckBig);
+    } catch (err) {
+      showToast(err instanceof Error && err.message ? err.message : "Failed to rename subject", CircleX);
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  /** Delete the folder — the sets fall back to "All Sets", never deleted. */
+  const handleDeleteSubject = async () => {
+    if (!online) {
+      showToast("Deleting needs a connection", CloudOff);
+      return;
+    }
+    const n = sessions.length;
+    const warning =
+      n > 0
+        ? `Delete the “${subject.name}” subject?\n\nIts ${n} study set${n === 1 ? "" : "s"} will NOT be deleted — they'll go back to All Sets.`
+        : `Delete the “${subject.name}” subject?`;
+    if (!confirm(warning)) return;
+    setDeletingSubject(true);
+    try {
+      const res = await fetch(`/api/subjects/${subject.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to delete subject");
+      }
+      showToast("Subject deleted — its sets are in All Sets", FolderOpen);
+      onOfflineChanged();
+      onBack();
+    } catch (err) {
+      showToast(err instanceof Error && err.message ? err.message : "Failed to delete subject", CircleX);
+    } finally {
+      setDeletingSubject(false);
+    }
+  };
+
+  const openMoveSheet = (session: StudySession) => {
+    if (!online) {
+      showToast("Moving sets needs a connection", CloudOff);
+      return;
+    }
+    setMoveSheet(session);
+  };
+
+  const tint = subjectTint(subject.id);
+
+  return (
+    <div style={{ padding: "20px 16px" }}>
+      {/* Header: back, folder identity, rename/delete, and the "+ New Set"
+          creator that files straight into this subject. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={onBack}
+          style={{ padding: "6px 10px", borderRadius: 12 }}
+          aria-label="Back to My Study Sets"
+        >
+          <ArrowLeft />
+        </button>
+        <span
+          aria-hidden
+          style={{
+            width: 46,
+            height: 46,
+            borderRadius: 13,
+            background: tint.bg,
+            color: tint.color,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+        >
+          <Folder size={24} strokeWidth={1.8} />
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {subject.name}
+          </h2>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", fontWeight: 600 }}>
+            {loading ? "…" : `${sessions.length} set${sessions.length === 1 ? "" : "s"}`}
+          </p>
+        </div>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={() => {
+            if (!online) {
+              showToast("Renaming needs a connection", CloudOff);
+              return;
+            }
+            setRenameOpen(true);
+          }}
+          style={{ padding: "6px" }}
+          aria-label={`Rename ${subject.name}`}
+          title="Rename subject"
+        >
+          <Pencil />
+        </button>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={() => void handleDeleteSubject()}
+          disabled={deletingSubject}
+          style={{ padding: "6px", color: "#f43f5e" }}
+          aria-label={`Delete ${subject.name}`}
+          title="Delete subject (sets are kept)"
+        >
+          <Trash />
+        </button>
+        <button className="btn btn-primary btn-sm" onClick={onCreateSet} style={{ padding: "6px 12px", flexShrink: 0 }}>
+          <Plus />
+          New Set
+        </button>
+      </div>
+
+      {fromCache && (
+        <OfflineNotice
+          title="Offline — showing the sets saved on this device"
+          action={<OfflineRetryButton onRetry={() => void load()} busy={false} />}
+        >
+          Every study mode works here. Answers sync the moment you&apos;re back online.
+        </OfflineNotice>
+      )}
+
+      {loading ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="shimmer" style={{ height: 80, borderRadius: 16 }} />
+          ))}
+        </div>
+      ) : sessions.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "48px 20px" }}>
+          <div style={{ marginBottom: 16, color: "var(--text-muted)" }}>
+            <Inbox size={64} strokeWidth={1.5} aria-hidden />
+          </div>
+          <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px" }}>Nothing in “{subject.name}” yet</h3>
+          <p style={{ color: "var(--text-muted)", fontSize: 14, margin: "0 0 16px" }}>
+            Create a set straight into this subject — or move one in from All Sets with the folder button.
+          </p>
+          <button className="btn btn-primary btn-sm" onClick={onCreateSet}>
+            <Plus />
+            New Set
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {sessions.map((session, i) => (
+            <DeckRow
+              key={session.id}
+              session={session}
+              index={i}
+              online={online}
+              deleting={deleting}
+              offlineBusy={offlineBusy}
+              offlineDecks={offlineDecks}
+              onOpen={handleOpen}
+              onReviewDeck={onReviewDeck}
+              onEditDeck={handleEdit}
+              onDelete={handleDelete}
+              onToggleOffline={onToggleOffline}
+              onMove={openMoveSheet}
+            />
+          ))}
+
+          {/* Always-visible manual creator at the end of the list. */}
+          <button
+            onClick={onCreateSet}
+            style={{
+              width: "100%",
+              padding: "14px 16px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              font: "inherit",
+              color: "#1d4ed8",
+              fontWeight: 700,
+              fontSize: 14,
+              background: "#eff6ff",
+              border: "2px dashed #93c5fd",
+              borderRadius: 20,
+              cursor: "pointer",
+            }}
+          >
+            <Plus size={18} aria-hidden />
+            Add set manually
+          </button>
+        </div>
+      )}
+
+      {moveSheet && (
+        <MoveSheet
+          session={moveSheet}
+          online={online}
+          onClose={() => setMoveSheet(null)}
+          onMoved={() => {
+            setMoveSheet(null);
+            onOfflineChanged();
+          }}
+        />
+      )}
+
+      {renameOpen && (
+        <NameModal
+          title="Rename Subject"
+          label="Give this subject folder a new name."
+          placeholder="Subject name"
+          confirmLabel="Save Name"
+          initial={subject.name}
+          busy={renaming}
+          onClose={() => setRenameOpen(false)}
+          onConfirm={handleRename}
+        />
+      )}
+    </div>
+  );
+}
+
 // ─── Sessions Page ────────────────────────────────────────────────────────────
 function SessionsPage({
   online,
@@ -4250,6 +5217,7 @@ function SessionsPage({
   onOpen,
   onReviewDeck,
   onEditDeck,
+  onOpenSubject,
 }: {
   online: boolean;
   /** Bumped after a background sync so the list refreshes its numbers. */
@@ -4266,6 +5234,8 @@ function SessionsPage({
   onReviewDeck: (id: number) => void;
   /** Open the deck editor — a deck id to edit, or null for a new manual deck. */
   onEditDeck: (id: number | null) => void;
+  /** Drill into a subject folder's page. */
+  onOpenSubject: (subject: { id: number; name: string }) => void;
 }) {
   const [sessions, setSessions] = useState<StudySession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -4275,6 +5245,15 @@ function SessionsPage({
   /** True when the list below came from the device cache, not the server. */
   const [fromCache, setFromCache] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  // ── Subject folders + search ──────────────────────────────────────────────
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  /** Search box text — filters subjects AND sets (empty = show everything). */
+  const [query, setQuery] = useState("");
+  /** The "Move to subject" bottom sheet: the set being filed, if any. */
+  const [moveSheet, setMoveSheet] = useState<StudySession | null>(null);
+  /** The "name your new subject" dialog. */
+  const [newSubjectOpen, setNewSubjectOpen] = useState(false);
+  const [creatingSubject, setCreatingSubject] = useState(false);
 
   const refreshOfflineDecks = useCallback(async () => {
     const decks = await readDecks();
@@ -4285,13 +5264,22 @@ function SessionsPage({
     async (signal?: AbortSignal) => {
       setLoading(true);
       try {
-        const data = await fetchJson<{ sessions: StudySession[] }>(
-          "/api/sessions",
-          signal ? { signal } : undefined
-        );
+        // Sessions (with per-subject filing) and the subject folders come
+        // from two endpoints; a failure of either shouldn't blank the page,
+        // so the subjects fetch degrades to the last cached copy.
+        const [data, subjectsResult] = await Promise.all([
+          fetchJson<{ sessions: StudySession[] }>("/api/sessions", signal ? { signal } : undefined),
+          fetchJson<{ subjects: Subject[] }>("/api/subjects", signal ? { signal } : undefined)
+            .then((res) => res.subjects ?? [])
+            .catch(() => null),
+        ]);
         if (signal?.aborted) return;
         setSessions(data.sessions || []);
         setFromCache(false);
+        if (subjectsResult) {
+          setSubjects(subjectsResult);
+          cacheSubjectsLocally(subjectsResult);
+        }
         void refreshOfflineDecks();
       } catch (error) {
         if (signal?.aborted) return;
@@ -4305,6 +5293,8 @@ function SessionsPage({
         if (signal?.aborted) return;
         setSessions(rows);
         setFromCache(true);
+        // Subject names aren't in the deck snapshots — use the cached copy.
+        setSubjects(await readCachedSubjects());
         await refreshOfflineDecks();
         if (rows.length === 0) {
           showToast("No sets saved on this device yet", CloudOff);
@@ -4371,20 +5361,52 @@ function SessionsPage({
     }
   };
 
-  const formatDate = (d: string) => {
-    const date = new Date(d);
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    const hours = diff / 3600000;
-    if (hours < 1) return "Just now";
-    if (hours < 24) return `${Math.floor(hours)}h ago`;
-    if (hours < 48) return "Yesterday";
-    return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  // ── Search: filter subjects by name and sets by title (case-insensitive).
+  const q = query.trim().toLowerCase();
+  const filteredSubjects = q
+    ? subjects.filter((s) => s.name.toLowerCase().includes(q))
+    : subjects;
+  const filteredSessions = q
+    ? sessions.filter((s) => s.title.toLowerCase().includes(q))
+    : sessions;
+
+  /** "Move to subject" sheet opener — passed down to every deck row. */
+  const openMoveSheet = (session: StudySession) => {
+    if (!online) {
+      showToast("Moving sets needs a connection", CloudOff);
+      return;
+    }
+    setMoveSheet(session);
+  };
+
+  /** Create a subject folder from the "+ New Subject" dialog. */
+  const handleCreateSubject = async (name: string) => {
+    setCreatingSubject(true);
+    try {
+      const res = await fetch("/api/subjects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to create subject");
+      setSubjects((prev) => {
+        const next = [...prev, data.subject as Subject];
+        cacheSubjectsLocally(next);
+        return next;
+      });
+      setNewSubjectOpen(false);
+      showToast(`Subject “${data.subject.name}” created`, FolderPlus);
+    } catch (err) {
+      showToast(err instanceof Error && err.message ? err.message : "Failed to create subject", CircleX);
+    } finally {
+      setCreatingSubject(false);
+    }
   };
 
   return (
     <div style={{ padding: "20px 16px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <h2 style={{ fontSize: 22, fontWeight: 800, margin: 0, display: "inline-flex", alignItems: "center", gap: 8 }}>
           <Library size={21} aria-hidden />
           My Study Sets
@@ -4404,18 +5426,64 @@ function SessionsPage({
               <CloudDownload />
             )}
           </button>
+          {/* A hand-built set that starts OUTSIDE any subject folder. */}
           <button
-            className="btn btn-primary btn-sm"
+            className="btn btn-white-clay btn-sm"
             onClick={() => handleEdit(null)}
-            style={{ padding: "6px 12px" }}
+            style={{ padding: "6px 10px" }}
+            aria-label="Create a study set manually"
+            title="Create a study set manually"
           >
             <Plus />
-            New
+            Set
+          </button>
+          {/* The subject creator — folders are the top-level organiser. */}
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={() => {
+              if (!online) {
+                showToast("Creating subjects needs a connection", CloudOff);
+                return;
+              }
+              setNewSubjectOpen(true);
+            }}
+            style={{ padding: "6px 12px" }}
+          >
+            <FolderPlus />
+            New Subject
           </button>
           <button className="btn btn-ghost btn-sm" onClick={() => load()} style={{ padding: "6px 10px" }} aria-label="Refresh study sets">
             <RefreshCw />
           </button>
         </div>
+      </div>
+
+      {/* Search — filters both the subject folders and the sets below, so a
+          big library never needs endless scrolling. */}
+      <div style={{ position: "relative", marginBottom: 16 }}>
+        <Search
+          size={17}
+          aria-hidden
+          style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9db4d0", pointerEvents: "none" }}
+        />
+        <input
+          className="type-input"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search subjects or sets"
+          aria-label="Search subjects or study sets"
+          style={{ padding: "11px 38px 11px 42px", fontSize: 14 }}
+        />
+        {query && (
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setQuery("")}
+            style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", padding: "6px", color: "var(--text-muted)" }}
+            aria-label="Clear search"
+          >
+            <X size={16} />
+          </button>
+        )}
       </div>
 
       {fromCache && (
@@ -4434,7 +5502,7 @@ function SessionsPage({
             <div key={i} className="shimmer" style={{ height: 80, borderRadius: 16 }} />
           ))}
         </div>
-      ) : sessions.length === 0 ? (
+      ) : sessions.length === 0 && subjects.length === 0 ? (
         <div style={{ textAlign: "center", padding: "60px 20px" }}>
           <div style={{ marginBottom: 16, color: "var(--text-muted)" }}>
             <Inbox size={64} strokeWidth={1.5} aria-hidden />
@@ -4449,121 +5517,151 @@ function SessionsPage({
           </button>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {sessions.map((session, i) => (
-            <div
-              key={session.id}
-              className="glass-card animate-fade-in"
-              style={{
-                padding: "16px",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 14,
-                animationDelay: `${i * 0.05}s`,
-                transition: "transform 0.15s",
-              }}
-              onClick={() =>
-                offlineDecks.has(session.id) || online
-                  ? onOpen(session.id)
-                  : showToast("This set isn't saved on this device yet", CloudOff)
-              }
-              onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.98)")}
-              onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
-              onTouchStart={(e) => (e.currentTarget.style.transform = "scale(0.98)")}
-              onTouchEnd={(e) => (e.currentTarget.style.transform = "scale(1)")}
-            >
-              <div style={{
-                width: 52,
-                height: 52,
-                borderRadius: 14,
-                background: "linear-gradient(135deg, #e0f2fe, #eef2ff)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 26,
-                flexShrink: 0,
-              }}>
-                <SourceTypeIcon type={session.sourceType} size={26} />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ margin: "0 0 3px", fontWeight: 700, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {session.title}
-                </p>
-                <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                  <span>
-                    {session.cardCount} card{session.cardCount === 1 ? "" : "s"} · {formatDate(session.createdAt)}
+        <>
+          {/* ── Subjects: full-width folder rows, one per subject ───────── */}
+          {(subjects.length > 0 || filteredSubjects.length > 0) && (
+            <section style={{ marginBottom: 22 }}>
+              <h3 style={{ fontSize: 15, fontWeight: 800, margin: "0 0 10px", display: "flex", alignItems: "center", gap: 7, color: "var(--text)" }}>
+                <Folder size={16} aria-hidden style={{ color: "#1d4ed8" }} />
+                Subjects
+                {q && (
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-muted)" }}>
+                    {filteredSubjects.length} match{filteredSubjects.length === 1 ? "" : "es"}
                   </span>
-                  {typeof session.knownCount === "number" && (
-                    <span
-                      className="badge"
-                      style={{
-                        background: session.knownCount >= session.cardCount && session.cardCount > 0 ? "#d1fae5" : "#dbeafe",
-                        color: session.knownCount >= session.cardCount && session.cardCount > 0 ? "#047857" : "#1d4ed8",
-                      }}
-                    >
-                      {session.knownCount >= session.cardCount && session.cardCount > 0
-                        ? "All known"
-                        : `${session.knownCount}/${session.cardCount} known`}
-                    </span>
-                  )}
-                  {typeof session.dueCount === "number" && session.dueCount > 0 && (
-                    <span className="badge" style={{ background: "#ffe4e6", color: "#9f1239" }}>
-                      {session.dueCount} due
-                    </span>
-                  )}
-                  {offlineDecks.has(session.id) && (
-                    <OfflineBadge savedAt={offlineDecks.get(session.id)} />
-                  )}
-                </p>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                <OfflinePinButton
-                  title={session.title}
-                  saved={offlineDecks.has(session.id)}
-                  busy={offlineBusy}
-                  onToggle={() =>
-                    onToggleOffline(session.id, offlineDecks.has(session.id))
-                  }
-                />
-                {Boolean(session.dueCount) && (
-                  <button
-                    className="btn btn-primary btn-sm"
-                    style={{ padding: "6px 10px" }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onReviewDeck(session.id);
-                    }}
-                    aria-label={`Review ${session.dueCount} due cards in ${session.title}`}
-                  >
-                    <Brain />
-                  </button>
                 )}
-                <button
-                  className="btn btn-ghost btn-sm"
-                  style={{ padding: "6px", opacity: online ? 1 : 0.5 }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleEdit(session.id);
-                  }}
-                  aria-label={`Edit ${session.title}`}
-                >
-                  <Pencil />
-                </button>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  style={{ padding: "6px", color: "#f43f5e", opacity: deleting === session.id ? 0.5 : 1 }}
-                  onClick={(e) => handleDelete(session.id, e)}
-                  disabled={deleting === session.id}
-                  aria-label={`Delete ${session.title}`}
-                >
-                  <Trash />
-                </button>
-                <ArrowRight />
+              </h3>
+              {filteredSubjects.length > 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {filteredSubjects.map((subject, i) => {
+                    const tint = subjectTint(subject.id);
+                    return (
+                      <button
+                        key={subject.id}
+                        className="glass-card animate-fade-in"
+                        onClick={() => onOpenSubject(subject)}
+                        style={{
+                          padding: "16px",
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 14,
+                          width: "100%",
+                          font: "inherit",
+                          color: "var(--text)",
+                          textAlign: "left",
+                          animationDelay: `${i * 0.05}s`,
+                          transition: "transform 0.15s",
+                        }}
+                        onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.98)")}
+                        onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
+                        onTouchStart={(e) => (e.currentTarget.style.transform = "scale(0.98)")}
+                        onTouchEnd={(e) => (e.currentTarget.style.transform = "scale(1)")}
+                      >
+                        <span
+                          aria-hidden
+                          style={{
+                            width: 52,
+                            height: 52,
+                            borderRadius: 14,
+                            background: tint.bg,
+                            color: tint.color,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            flexShrink: 0,
+                          }}
+                        >
+                          <Folder size={26} strokeWidth={1.8} />
+                        </span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ display: "block", margin: "0 0 3px", fontWeight: 700, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {subject.name}
+                          </span>
+                          <span style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>
+                            {subject.setCount} set{subject.setCount === 1 ? "" : "s"}
+                          </span>
+                        </span>
+                        <ArrowRight aria-hidden style={{ color: "var(--text-muted)", flexShrink: 0 }} size={20} />
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>
+                  No subjects match “{query}”.
+                </p>
+              )}
+            </section>
+          )}
+
+          {/* ── All Sets: every study set, filed or not ─────────────────── */}
+          <section>
+            <h3 style={{ fontSize: 15, fontWeight: 800, margin: "0 0 10px", display: "flex", alignItems: "center", gap: 7, color: "var(--text)" }}>
+              <Layers size={16} aria-hidden style={{ color: "#1d4ed8" }} />
+              All Sets
+              {q && (
+                <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-muted)" }}>
+                  {filteredSessions.length} match{filteredSessions.length === 1 ? "" : "es"}
+                </span>
+              )}
+            </h3>
+            {filteredSessions.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {filteredSessions.map((session, i) => (
+                  <DeckRow
+                    key={session.id}
+                    session={session}
+                    index={i}
+                    online={online}
+                    deleting={deleting}
+                    offlineBusy={offlineBusy}
+                    offlineDecks={offlineDecks}
+                    onOpen={onOpen}
+                    onReviewDeck={onReviewDeck}
+                    onEditDeck={handleEdit}
+                    onDelete={handleDelete}
+                    onToggleOffline={onToggleOffline}
+                    onMove={openMoveSheet}
+                  />
+                ))}
               </div>
-            </div>
-          ))}
-        </div>
+            ) : q ? (
+              <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>
+                No sets match “{query}”.
+              </p>
+            ) : (
+              <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>
+                No sets here yet — tap <strong>Set</strong> to build one manually, or create a subject above.
+              </p>
+            )}
+          </section>
+        </>
+      )}
+
+      {/* Move a set into a subject folder (bottom sheet). */}
+      {moveSheet && (
+        <MoveSheet
+          session={moveSheet}
+          online={online}
+          onClose={() => setMoveSheet(null)}
+          onMoved={() => {
+            setMoveSheet(null);
+            onOfflineChanged();
+          }}
+        />
+      )}
+
+      {/* Name-your-subject dialog for the "+ New Subject" button. */}
+      {newSubjectOpen && (
+        <NameModal
+          title="New Subject"
+          label="Subject name"
+          placeholder="e.g. Biology, Pharmacology…"
+          confirmLabel="Create Subject"
+          busy={creatingSubject}
+          onClose={() => setNewSubjectOpen(false)}
+          onConfirm={handleCreateSubject}
+        />
       )}
     </div>
   );
@@ -4607,10 +5705,13 @@ const editorBlur = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement |
 
 function DeckEditorPage({
   sessionId,
+  subject,
   onExit,
 }: {
   /** null → create a brand-new manual deck; a number → edit that deck. */
   sessionId: number | null;
+  /** Pre-files a NEW deck into this subject folder (from a subject page). */
+  subject?: { id: number; name: string } | null;
   /** Leave the editor. `savedId` is the deck id when changes were saved. */
   onExit: (savedId: number | null) => void;
 }) {
@@ -4728,6 +5829,8 @@ function DeckEditorPage({
             title: trimmedTitle,
             sourceType: "manual",
             summary: summary.trim() || undefined,
+            // Created from inside a subject folder → file it there directly.
+            subjectId: subject?.id,
             cards: payload,
           }),
         });
@@ -4799,6 +5902,27 @@ function DeckEditorPage({
         <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {sessionId === null ? "New Study Set" : "Edit Study Set"}
         </h2>
+        {subject && (
+          <span
+            title={`This set will be filed under the “${subject.name}” subject`}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              background: "#dbeafe",
+              color: "#1d4ed8",
+              fontSize: 12,
+              fontWeight: 700,
+              padding: "4px 10px",
+              borderRadius: 999,
+              maxWidth: 130,
+              flexShrink: 0,
+            }}
+          >
+            <Folder size={13} aria-hidden style={{ flexShrink: 0 }} />
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{subject.name}</span>
+          </span>
+        )}
         <button
           className="btn btn-primary btn-sm"
           onClick={handleSave}
@@ -5941,7 +7065,17 @@ export default function App() {
 
   // Deck editor overlay: { sessionId: null } creates a new manual deck,
   // a number edits that saved deck. `origin` decides where "save" lands.
-  const [deckEditor, setDeckEditor] = useState<{ sessionId: number | null; origin: Tab } | null>(null);
+  // `subject` pre-files a newly created deck into a subject folder (the
+  // "+ New Set" button inside a subject page sets it).
+  const [deckEditor, setDeckEditor] = useState<{
+    sessionId: number | null;
+    origin: Tab;
+    subject?: { id: number; name: string } | null;
+  } | null>(null);
+
+  // Subject folders: which subject page is open inside the My Sets tab
+  // (null = the normal My Study Sets list). Cleared when the tab changes.
+  const [subjectView, setSubjectView] = useState<{ id: number; name: string } | null>(null);
 
   // Spaced repetition (P4): which deck the Review tab is filtered to, and how
   // many cards are due right now (the number on the nav badge).
@@ -6396,6 +7530,7 @@ export default function App() {
         <DeckEditorPage
           key={deckEditor.sessionId ?? "new"}
           sessionId={deckEditor.sessionId}
+          subject={deckEditor.subject ?? null}
           onExit={handleEditorExit}
         />
       );
@@ -6513,6 +7648,34 @@ export default function App() {
     }
     if (tab === "sessions") {
       if (!signedIn) return <SignInPrompt feature="see your study sets" />;
+      if (subjectView) {
+        return (
+          <SubjectPage
+            key={subjectView.id}
+            subject={subjectView}
+            online={online}
+            syncToken={syncToken}
+            offlineBusy={offlineBusy}
+            onToggleOffline={handleToggleDeckOffline}
+            onOfflineChanged={() => setSyncToken((token) => token + 1)}
+            onOpen={handleOpenSession}
+            onReviewDeck={(id) => {
+              setReviewDeckId(id);
+              setTab("review");
+            }}
+            onEditDeck={(id) => setDeckEditor({ sessionId: id, origin: "sessions" })}
+            onCreateSet={() => {
+              if (!online) {
+                showToast("Creating sets needs a connection", CloudOff);
+                return;
+              }
+              setDeckEditor({ sessionId: null, origin: "sessions", subject: subjectView });
+            }}
+            onBack={() => setSubjectView(null)}
+            onRenamed={(name) => setSubjectView({ id: subjectView.id, name })}
+          />
+        );
+      }
       return (
         <SessionsPage
           online={online}
@@ -6527,6 +7690,7 @@ export default function App() {
             setTab("review");
           }}
           onEditDeck={(id) => setDeckEditor({ sessionId: id, origin: "sessions" })}
+          onOpenSubject={(subject) => setSubjectView({ id: subject.id, name: subject.name })}
         />
       );
     }
@@ -6664,6 +7828,7 @@ export default function App() {
               setPendingCards(null);
               setActiveSessionCards(null);
               setDeckEditor(null);
+              setSubjectView(null);
               if (id !== "review") setReviewDeckId(null);
             }}
             aria-label={badge ? `${label} — ${badge} card${badge === 1 ? "" : "s"} due` : label}

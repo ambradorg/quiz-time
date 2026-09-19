@@ -101,6 +101,8 @@ export interface OfflineDeck {
   summary: string | null;
   sourceType: string;
   createdAt: string;
+  /** Subject folder the deck is filed under (null = All Sets only). */
+  subjectId: number | null;
   cards: OfflineCard[];
   progress: OfflineProgress[];
   pinned: boolean;
@@ -222,6 +224,8 @@ export interface SessionPayload {
   sourceType: string;
   summary?: string | null;
   createdAt: string | Date;
+  /** Subject folder the deck is filed under (null/absent = All Sets only). */
+  subjectId?: number | null;
 }
 
 const toIsoString = (value: string | Date | null | undefined, fallback: string): string => {
@@ -250,6 +254,7 @@ export function buildOfflineDeck(input: {
     summary: input.session.summary ?? null,
     sourceType: input.session.sourceType ?? "text",
     createdAt: toIsoString(input.session.createdAt, nowIso(now)),
+    subjectId: input.session.subjectId ?? null,
     cards: [...(input.cards ?? [])]
       .map((card) => ({
         id: card.id,
@@ -313,6 +318,7 @@ export interface OfflineSessionRow {
   sourceText: null;
   summary: string | null;
   createdAt: string;
+  subjectId: number | null;
   cardCount: number;
   knownCount: number;
   dueCount: number;
@@ -345,6 +351,7 @@ export function buildOfflineSessionRows(
         sourceText: null,
         summary: deck.summary,
         createdAt: deck.createdAt,
+        subjectId: deck.subjectId ?? null,
         cardCount: deck.cards.length,
         knownCount: deck.progress.filter((p) => p.isKnown).length,
         dueCount: rows.filter((row) => new Date(row.dueAt).getTime() <= now.getTime()).length,

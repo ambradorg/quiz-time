@@ -117,20 +117,31 @@ export const authConfig = {
   // (Arena's UI), which makes every auth cookie "cross-site" to the browser.
   // The default SameSite=Lax cookies are then never stored or sent — sign-in
   // dies with MissingCSRF before the first request completes. SameSite=None
-  // with Secure is the supported way to let the cookies flow into the
-  // embedded preview. Gated behind PREVIEW_EMBEDDED=1 (dev/preview .env only):
-  // locally over plain http the browser would reject Secure cookies, and in
-  // production the app is always top-level on its own origin, so both keep
-  // the stricter Lax default (which also protects against CSRF in the wild).
+  // with Secure is the baseline for letting cookies flow into the embedded
+  // preview, and `Partitioned` (CHIPS) is what lets modern Chrome actually
+  // STORE them there: without it, third-party-cookie blocking drops every
+  // auth cookie and the demo button fails with MissingCSRF. Gated behind
+  // PREVIEW_EMBEDDED=1 (dev/preview .env only): locally over plain http the
+  // browser would reject Secure cookies, and in production the app is always
+  // top-level on its own origin, so both keep the stricter Lax default (which
+  // also protects against CSRF in the wild).
   ...(process.env.PREVIEW_EMBEDDED === "1"
     ? {
         cookies: {
-          sessionToken: { options: { sameSite: "none" as const, secure: true } },
-          csrfToken: { options: { sameSite: "none" as const, secure: true } },
-          callbackUrl: { options: { sameSite: "none" as const, secure: true } },
-          state: { options: { sameSite: "none" as const, secure: true } },
+          sessionToken: {
+            options: { sameSite: "none" as const, secure: true, partitioned: true },
+          },
+          csrfToken: {
+            options: { sameSite: "none" as const, secure: true, partitioned: true },
+          },
+          callbackUrl: {
+            options: { sameSite: "none" as const, secure: true, partitioned: true },
+          },
+          state: {
+            options: { sameSite: "none" as const, secure: true, partitioned: true },
+          },
           pkceCodeVerifier: {
-            options: { sameSite: "none" as const, secure: true },
+            options: { sameSite: "none" as const, secure: true, partitioned: true },
           },
         },
       }
@@ -139,6 +150,23 @@ export const authConfig = {
     signIn: "/login",
   },
   callbacks: {
+    async redirect({ url, baseUrl }) {
+      // Behind proxies the Host header can be an internal address (0.0.0.0,
+      // tunnel ids, …), while the browser sits on the public preview origin.
+      // Collapsing same-origin redirects to a RELATIVE path keeps the visitor
+      // on the origin they actually loaded the app from; anything else falls
+      // back to the Auth.js default (baseUrl) — never an open redirect.
+      if (url.startsWith("/")) return url;
+      try {
+        const target = new URL(url);
+        if (target.origin === new URL(baseUrl).origin) {
+          return `${target.pathname}${target.search}${target.hash}`;
+        }
+      } catch {
+        /* not an absolute URL — treat as unsafe below */
+      }
+      return baseUrl;
+    },
     async jwt({ token, user }) {
       // `user` is only present on the first callback right after sign-in.
       // (In Auth.js v5 types, `id` is optional — Google always provides it.)
