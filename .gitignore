@@ -26,3 +26,7 @@ next-env.d.ts
 
 # allow a committed example, but never real env files
 !.env.example
+
+# Browser test artifacts
+/test-results/
+/playwright-report/
