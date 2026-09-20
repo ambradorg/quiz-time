@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { LoginPage } from "@/components/login-page";
-import { OwnerPresenceBar } from "@/components/owner-presence";
+import { OwnerPresenceBar, PresencePanel } from "@/components/owner-presence";
+import { usePresenceRoster } from "@/lib/use-presence";
 import {
   extractPdfText,
   isPasswordProtectedPdf,
@@ -40,7 +41,7 @@ import {
 } from "@/lib/offline";
 import { useOfflineIdentity, useOnlineStatus, useOutbox } from "@/lib/use-offline";
 import { usePresenceHeartbeat } from "@/lib/use-presence";
-import { MascotHost } from "@/components/hamster-mascot";
+import { MascotHost, MascotInline } from "@/components/hamster-mascot";
 import { CoursePickerModal } from "@/components/course-picker";
 import NotificationCenter from "@/components/notification-center";
 import { useNotifications } from "@/lib/use-notifications";
@@ -138,6 +139,9 @@ import {
   Trophy,
   Type,
   Upload,
+  Users,
+  LogOut,
+  Ellipsis,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -3291,12 +3295,10 @@ function ReviewPage({
           {activeDeck ? `Review ${activeDeck.title}` : "Start review"} · {startable} card{startable === 1 ? "" : "s"}
         </button>
       ) : (
-        <div className="glass-card" style={{ textAlign: "center", padding: "26px 20px", margin: "16px 0 10px" }}>
-          <div style={{ marginBottom: 8, color: "#7c3aed" }}>
-            <CircleCheckBig size={42} strokeWidth={1.5} aria-hidden />
-          </div>
-          <p style={{ margin: 0, fontWeight: 800, fontSize: 16 }}>Nothing due right now</p>
-          <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--text-muted)" }}>
+        <div className="card-elevated" style={{ textAlign: "center", padding: "24px 20px", margin: "16px 0 10px" }}>
+          <MascotInline mood="celebrate" text={counts.tracked === 0 ? "Review a deck once and it joins the rotation!" : "All caught up! Come back later."} size={84} />
+          <p style={{ margin: "14px 0 0", fontWeight: 800, fontSize: 16 }}>Nothing due right now</p>
+          <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--text-muted)", lineHeight: 1.5 }}>
             {counts.tracked === 0
               ? "Review a deck once and it enters the rotation — you'll see the cards again right before you'd forget them."
               : `Your next card comes back ${dueLabel(data.nextDueAt)}. Come back then, or keep studying in the meantime.`}
@@ -5178,11 +5180,9 @@ function SubjectPage({
           ))}
         </div>
       ) : sessions.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "48px 20px" }}>
-          <div style={{ marginBottom: 16, color: "var(--text-muted)" }}>
-            <Inbox size={64} strokeWidth={1.5} aria-hidden />
-          </div>
-          <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px" }}>Nothing in “{subject.name}” yet</h3>
+        <div style={{ textAlign: "center", padding: "32px 20px" }}>
+          <MascotInline mood="idle" text={`"${subject.name}" is waiting for its first set!`} size={84} />
+          <h3 style={{ fontSize: 18, fontWeight: 700, margin: "16px 0 8px" }}>Nothing in “{subject.name}” yet</h3>
           <p style={{ color: "var(--text-muted)", fontSize: 14, margin: "0 0 16px" }}>
             Create a set straight into this subject — or move one in from All Sets with the folder button.
           </p>
@@ -5562,12 +5562,10 @@ function SessionsPage({
           ))}
         </div>
       ) : sessions.length === 0 && subjects.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "60px 20px" }}>
-          <div style={{ marginBottom: 16, color: "var(--text-muted)" }}>
-            <Inbox size={64} strokeWidth={1.5} aria-hidden />
-          </div>
-          <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px" }}>No study sets yet!</h3>
-          <p style={{ color: "var(--text-muted)", fontSize: 14, margin: "0 0 16px" }}>
+        <div style={{ textAlign: "center", padding: "32px 20px" }}>
+          <MascotInline mood="point" text="No sets yet — let's make your first one!" size={84} />
+          <h3 style={{ fontSize: 18, fontWeight: 700, margin: "16px 0 8px" }}>No study sets yet!</h3>
+          <p style={{ color: "var(--text-muted)", fontSize: 14, margin: "0 0 16px", lineHeight: 1.6 }}>
             Upload a PDF or image to create your first flashcard set — or build one yourself, card by card.
           </p>
           <button className="btn btn-primary btn-sm" onClick={() => handleEdit(null)}>
@@ -6639,92 +6637,37 @@ function HomePage({
   /** Open the course picker in edit mode. */
   onEditCourse: () => void;
 }) {
-  return (
-    <div style={{ padding: "20px 16px" }}>
-      {/* Hero — Elevated: Digital Indigo #1e1b4b matte, icon capsules stroke 2.5, inset glow buttons */}
-      <div
-        className="clay-hero"
-        style={{
-          padding: "26px 22px 22px",
-          marginBottom: 24,
-        }}
-      >
-        {/* Subtle grain / highlight, no aggressive blobs */}
-        <div style={{
-          position: "absolute",
-          inset: 0,
-          background: "radial-gradient(520px 320px at 18% 0%, rgba(255,255,255,0.07), transparent 60%)",
-          pointerEvents: "none",
-        }} />
-        {/* Top row: capsule label */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, position: "relative" }}>
-          <span className="icon-capsule">
-            <span className="icon-capsule-dot">
-              <Sparkles size={14} strokeWidth={2.5} aria-hidden style={{ color: "white" }} />
-            </span>
-            <span className="icon-capsule-label">AI Study Partner</span>
+    return (
+    <div className="section-stack" style={{ padding: "20px 16px 24px" }}>
+      {/* Hero — primary framing, page-title typography */}
+      <div className="clay-hero">
+        <div className="meta-label" style={{ color: "rgba(255,255,255,0.7)", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 28, height: 28, borderRadius: 999, background: "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ display: "flex" }}><Sparkles size={14} strokeWidth={2.5} aria-hidden style={{ color: "white" }} /></span>
           </span>
+          AI Study Partner
         </div>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 14, position: "relative" }}>
-          <div className="icon-capsule-dot" style={{ width: 52, height: 52, background: "rgba(255,255,255,0.10)", borderColor: "rgba(255,255,255,0.14)" }}>
-            <Heart size={26} strokeWidth={2.5} aria-hidden style={{ color: "white" }} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <h1 style={{ margin: "0 0 6px", fontSize: 28, fontWeight: 900, lineHeight: 1.1, letterSpacing: "-0.02em" }}>
-              QuizTime
-            </h1>
-            <p style={{ margin: "0 0 18px", fontSize: 13.5, color: "rgba(255,255,255,0.72)", lineHeight: 1.6, fontWeight: 500 }}>
-              Upload your study material and I&apos;ll turn it into fun flashcards — Study, Exam, Identification or Enumeration, plus spaced repetition.
-            </p>
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 10, position: "relative" }}>
-          <button
-            className="btn btn-white-clay"
-            style={{ fontWeight: 800, fontSize: 14.5, padding: "12px 20px", flex: 1 }}
-            onClick={onUpload}
-          >
+        <h1 className="page-title" style={{ color: "white", marginBottom: 8, fontSize: 32 }}>
+          QuizTime
+        </h1>
+        <p style={{ margin: "0 0 20px", fontSize: 14.5, color: "rgba(255,255,255,0.78)", lineHeight: 1.6, fontWeight: 500, maxWidth: 320 }}>
+          Upload your notes and I&apos;ll turn them into flashcards — Study, Exam, Identification, Enumeration, plus spaced repetition that sticks.
+        </p>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button className="btn btn-primary" style={{ flex: 1, background: "white", color: "var(--primary)", fontWeight: 800 }} onClick={onUpload}>
             <Sparkles size={16} strokeWidth={2.5} aria-hidden />
             Start Studying
           </button>
-          <button
-            className="btn"
-            style={{
-              fontWeight: 700,
-              fontSize: 14,
-              padding: "12px 16px",
-              background: "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,0.12)",
-              color: "rgba(255,255,255,0.85)",
-              boxShadow: "inset 0 1px 1px rgba(255,255,255,0.12), 0 4px 12px rgba(0,0,0,0.12)",
-            }}
-            onClick={onSessions}
-          >
+          <button className="btn btn-secondary" style={{ background: "rgba(255,255,255,0.12)", borderColor: "rgba(255,255,255,0.18)", color: "white" }} onClick={onSessions}>
             <Library size={16} strokeWidth={2.5} aria-hidden />
             My Sets
           </button>
         </div>
-        {/* Feature capsules row */}
-        <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap", position: "relative" }}>
-          {[
-            { icon: Brain, label: "Spaced" },
-            { icon: ClipboardCheck, label: "Exam" },
-            { icon: Type, label: "Identify" },
-          ].map((f) => (
-            <span key={f.label} className="icon-capsule-feature">
-              <span className="icon-capsule-dot" style={{ width: 22, height: 22 }}>
-                <f.icon size={12} strokeWidth={2.5} aria-hidden style={{ color: "white" }} />
-              </span>
-              <span style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.68)" }}>{f.label}</span>
-            </span>
-          ))}
-        </div>
       </div>
 
-      {/* Course card: the profile course at a glance, tap to change. This is
-          the "be specific for the user course" surface the picker feeds. */}
+      {/* Course — secondary neutral, not primary */}
       <button
-        className="glass-card animate-fade-in"
+        className="card-elevated animate-fade-in"
         onClick={onEditCourse}
         style={{
           width: "100%",
@@ -6732,164 +6675,138 @@ function HomePage({
           alignItems: "center",
           gap: 12,
           padding: "14px 16px",
-          marginBottom: 16,
-          border: course ? "2px solid #bfdbfe" : "2px dashed #93c5fd",
-          background: "linear-gradient(135deg, #eff6ff, #eef2ff)",
           cursor: "pointer",
-          font: "inherit",
-          color: "var(--text)",
           textAlign: "left",
+          border: course ? "1px solid var(--border)" : "1.5px dashed var(--border-strong)",
         }}
       >
-        <span style={{ color: "#1d4ed8", display: "flex", flexShrink: 0 }}>
-          <GraduationCap size={26} aria-hidden />
+        <span style={{ width: 40, height: 40, borderRadius: 12, background: "var(--secondary-light)", color: "var(--text-secondary)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <GraduationCap size={20} aria-hidden />
         </span>
         <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: "block", fontSize: 14, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span className="subsection-title" style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {course ? course : "Choose your course"}
           </span>
-          <span style={{ display: "block", fontSize: 12, color: "var(--text-muted)" }}>
-            {course
-              ? "Your flashcards are tailored to this course — tap to change"
-              : "Tell QuizTime your course and the AI will tailor your flashcards"}
+          <span className="meta-text" style={{ display: "block", color: "var(--text-muted)", marginTop: 2 }}>
+            {course ? "Tailored flashcards — tap to change" : "Tell QuizTime your course to tailor cards"}
           </span>
         </span>
-        <Pencil size={16} aria-hidden style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+        <Pencil size={14} aria-hidden style={{ color: "var(--text-faint)", flexShrink: 0 }} />
       </button>
 
-      {/* Offline study: what's on this device, and the one-tap download. */}
-      <OfflineReadyCard
-        deckCount={offlineDeckCount}
-        cardCount={offlineCardCount}
-        savedAt={offlineSavedAt}
-        online={online}
-        busy={offlineBusy}
-        onDownloadAll={onDownloadAll}
-        onOpenSets={onSessions}
-      />
-
-      {/* Spaced repetition nudge — only when there is actually work waiting. */}
-      {dueCount > 0 && (
-        <button
-          className="glass-card animate-fade-in"
-          onClick={onReview}
-          style={{
-            width: "100%",
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            padding: "14px 16px",
-            marginBottom: 24,
-            border: "2px solid #ddd6fe",
-            background: "linear-gradient(135deg, #f5f3ff, #eef2ff)",
-            cursor: "pointer",
-            font: "inherit",
-            color: "var(--text)",
-            textAlign: "left",
-          }}
-        >
-          <span style={{ color: "#6d28d9", display: "flex", flexShrink: 0 }}>
-            <Brain size={26} aria-hidden />
-          </span>
-          <span style={{ flex: 1, minWidth: 0 }}>
-            <span style={{ display: "block", fontSize: 14, fontWeight: 800 }}>
-              {dueCount} card{dueCount === 1 ? "" : "s"} due for review
-            </span>
-            <span style={{ display: "block", fontSize: 12, color: "var(--text-muted)" }}>
-              Spaced repetition picked the cards you&apos;re about to forget
-            </span>
-          </span>
-          <ArrowRight size={18} aria-hidden />
-        </button>
-      )}
-
-      {/* Features — Elevated with capsule icon borders stroke 2.5 */}
-      <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 14px", display: "flex", alignItems: "center", gap: 7 }}>
-        <Lightbulb size={17} strokeWidth={2.5} aria-hidden />
-        How it works
-      </h3>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
-        {[
-          { icon: FileText, title: "Upload PDF", desc: "Upload any PDF document" },
-          { icon: Camera, title: "Take Photo", desc: "Snap a photo of your notes" },
-          { icon: BookOpen, title: "Study Mode", desc: "Flip the card to reveal the answer" },
-          { icon: ClipboardCheck, title: "Exam Mode", desc: "4 choices, instant score" },
-          { icon: Type, title: "Identification", desc: "Type the answer from memory" },
-          { icon: ListOrdered, title: "Enumeration", desc: "List every item from memory" },
-          { icon: Brain, title: "Spaced Review", desc: "Due cards only — scheduled by SM-2" },
-        ].map((f, i) => (
-          <div
-            key={i}
-            className="glass-card animate-fade-in"
-            style={{ padding: "16px 14px", animationDelay: `${i * 0.1}s` }}
+      {/* Offline + Due — zoned with rhythm */}
+      <div className="zone-muted" style={{ borderRadius: 18, padding: 12 }}>
+        <OfflineReadyCard
+          deckCount={offlineDeckCount}
+          cardCount={offlineCardCount}
+          savedAt={offlineSavedAt}
+          online={online}
+          busy={offlineBusy}
+          onDownloadAll={onDownloadAll}
+          onOpenSets={onSessions}
+        />
+        {dueCount > 0 && (
+          <button
+            className="card-accent animate-fade-in"
+            onClick={onReview}
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: "14px 16px",
+              marginTop: 12,
+              cursor: "pointer",
+              textAlign: "left",
+              border: "1px solid var(--accent-light)",
+            }}
           >
-            <div
-              style={{
-                marginBottom: 10,
-                width: 36,
-                height: 36,
-                borderRadius: 999,
-                background: "rgba(30,27,75,0.06)",
-                border: "1px solid rgba(30,27,75,0.08)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                boxShadow: "inset 0 1px 1px rgba(255,255,255,0.8)",
-              }}
-            >
-              <f.icon size={18} strokeWidth={2.5} aria-hidden style={{ color: "#1e1b4b" }} />
-            </div>
-            <p style={{ margin: "0 0 4px", fontWeight: 700, fontSize: 14 }}>{f.title}</p>
-            <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>{f.desc}</p>
-          </div>
-        ))}
+            <span style={{ width: 40, height: 40, borderRadius: 12, background: "var(--accent-light)", color: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Brain size={20} aria-hidden />
+            </span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: 14, fontWeight: 700, color: "var(--text-primary)" }}>
+                {dueCount} card{dueCount === 1 ? "" : "s"} due for review
+              </span>
+              <span style={{ display: "block", fontSize: 12.5, color: "var(--text-muted)", marginTop: 2 }}>
+                Spaced repetition — right before you forget
+              </span>
+            </span>
+            <span style={{ background: "var(--accent)", color: "white", fontSize: 11, fontWeight: 800, padding: "4px 8px", borderRadius: 999, flexShrink: 0 }}>
+              {dueCount}
+            </span>
+          </button>
+        )}
       </div>
 
-      {/* Tips */}
-      <div style={{
-        background: "linear-gradient(135deg, #eff6ff, #ecfeff)",
-        border: "1.5px solid #bfdbfe",
-        borderRadius: 18,
-        padding: "18px 16px",
-        marginBottom: 16,
-      }}>
-        <h3 style={{ margin: "0 0 10px", fontSize: 15, fontWeight: 800, display: "flex", alignItems: "center", gap: 7 }}>
-          <Heart size={16} aria-hidden />
+      <div className="divider" />
+
+      {/* How it works — section-title + cards with secondary styling */}
+      <section>
+        <h3 className="section-title" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+          <Lightbulb size={16} strokeWidth={2.5} aria-hidden />
+          How it works
+        </h3>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          {[
+            { icon: FileText, title: "Upload PDF", desc: "Any PDF document" },
+            { icon: Camera, title: "Take Photo", desc: "Snap notes" },
+            { icon: BookOpen, title: "Study Mode", desc: "Flip to reveal" },
+            { icon: ClipboardCheck, title: "Exam Mode", desc: "4 choices, scored" },
+            { icon: Type, title: "Identification", desc: "Type from memory" },
+            { icon: ListOrdered, title: "Enumeration", desc: "List every item" },
+            { icon: Brain, title: "Spaced Review", desc: "Due cards only" },
+          ].map((f, i) => (
+            <div key={i} className="card-elevated" style={{ padding: "14px 12px" }}>
+              <div style={{ width: 32, height: 32, borderRadius: 10, background: "var(--secondary-light)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
+                <f.icon size={16} strokeWidth={2} aria-hidden style={{ color: "var(--text-secondary)" }} />
+              </div>
+              <p className="subsection-title" style={{ fontSize: 13, margin: "0 0 2px" }}>{f.title}</p>
+              <p className="meta-text" style={{ margin: 0, color: "var(--text-muted)", fontSize: 11.5 }}>{f.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="divider" />
+
+      {/* Study Tips — muted zone with distinct background */}
+      <div className="zone-muted" style={{ padding: "16px", borderRadius: 18 }}>
+        <h3 className="section-title" style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 7, fontSize: 14 }}>
+          <Heart size={14} aria-hidden />
           Study Tips
         </h3>
-        {[
-          "Review cards daily for best retention!",
-          "Focus on 'Still Learning' cards more.",
-          "Study first, then test yourself with Exam, Identification or Enumeration.",
-          "Explain answers in your own words.",
-        ].map((tip, i) => (
-          <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6, fontSize: 13, color: "var(--text-muted)" }}>
-            <Star size={14} aria-hidden style={{ flexShrink: 0, marginTop: 2, color: "#f59e0b" }} />
-            <span>{tip}</span>
-          </div>
-        ))}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {[
+            "Review cards daily for best retention!",
+            "Focus on 'Still Learning' cards more.",
+            "Study first, then test in Exam / Identify / Enumerate.",
+            "Explain answers in your own words.",
+          ].map((tip, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+              <Star size={12} aria-hidden style={{ flexShrink: 0, marginTop: 4, color: "var(--accent)" }} />
+              <span>{tip}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
-      <button
-        className="btn btn-primary"
-        style={{ width: "100%", marginBottom: 10 }}
-        onClick={onCreateManual}
-      >
-        <PenLine />
-        Create a Deck Manually
-      </button>
-      <button
-        className="btn btn-secondary"
-        style={{ width: "100%" }}
-        onClick={onSessions}
-      >
-        <Library />
-        View My Study Sets
-      </button>
+      {/* Actions — primary only for main, secondary for less important */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingTop: 4 }}>
+        <button className="btn btn-primary" style={{ width: "100%" }} onClick={onCreateManual}>
+          <PenLine />
+          Create a Deck Manually
+        </button>
+        <button className="btn btn-secondary" style={{ width: "100%" }} onClick={onSessions}>
+          <Library />
+          View My Study Sets
+        </button>
+      </div>
     </div>
   );
 }
 
+// ─── Setup Page
 // ─── Setup Page ───────────────────────────────────────────────────────────────
 function SetupPage() {
   return (
@@ -7191,6 +7108,8 @@ export default function App() {
 
   // Notification center: what the top-bar bell opens (inbox + push opt-in).
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [presenceOpen, setPresenceOpen] = useState(false);
 
   // Sign-in state (Auth.js). `data` is null while unauthenticated — and also
   // while offline, which is why the identity falls back to the cached profile
@@ -7342,6 +7261,7 @@ export default function App() {
   // skip it — beating into a dead connection just wastes battery). Only the
   // owner sees the roster the beats feed.
   usePresenceHeartbeat({ enabled: signedIn && online, activity: presenceActivity });
+  const presenceRoster = usePresenceRoster({ enabled: isOwner && signedIn && online });
 
   // Whether the open deck came from this device's cache (drives the notice and
   // keeps the user from wondering why edits are disabled).
@@ -7849,31 +7769,48 @@ export default function App() {
     { id: "stats" as Tab, label: "Stats", Icon: ChartColumn },
   ];
 
+  // Close user menu on outside click / escape
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setUserMenuOpen(false);
+    };
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-user-menu]") && !target.closest("[data-user-trigger]")) {
+        setUserMenuOpen(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onClick);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onClick);
+    };
+  }, [userMenuOpen]);
+
+  const presenceOnline = presenceRoster.roster?.users.filter((u) => u.online) ?? [];
+  const presenceCount = presenceRoster.roster?.online ?? 0;
+
   return (
-    <div style={{ maxWidth: 520, margin: "0 auto", position: "relative" }}>
+    <div className="app-shell">
       <IOSInstallPrompt />
-      {/* Top bar */}
-      <div className="clay-topbar" style={{
-        position: "sticky",
-        top: 0,
-        zIndex: 50,
-        padding: "12px 16px",
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-      }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/images/logo.png" alt="QuizTime" style={{ width: 36, height: 36, borderRadius: 10, objectFit: "cover" }} />
-        <div>
-          <h1 style={{ margin: 0, fontSize: 17, fontWeight: 900 }} className="gradient-text">
-            QuizTime
-          </h1>
-          <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)" }}>Your AI Study Partner</p>
+
+      {/* Top bar — cleaned: logo + brand, bell, user menu trigger */}
+      <header className="topbar">
+        <div className="topbar-left">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/images/logo.png" alt="QuizTime" className="topbar-logo" />
+          <div className="topbar-brand">
+            <h1 className="topbar-title">QuizTime</h1>
+            <p className="topbar-subtitle">Your AI Study Partner</p>
+          </div>
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+
+        <div className="topbar-right">
           {signedIn && (
             <button
-              className="nc-bell"
+              className="topbar-icon-btn"
               onClick={() => setNotificationsOpen(true)}
               aria-haspopup="dialog"
               aria-label={
@@ -7882,7 +7819,7 @@ export default function App() {
                   : "Notifications"
               }
             >
-              <Bell size={17} />
+              <Bell size={18} />
               {(notifications.inbox?.unread ?? 0) > 0 && (
                 <span className="nc-bell-badge">
                   {(notifications.inbox?.unread ?? 0) > 9 ? "9+" : notifications.inbox?.unread}
@@ -7890,57 +7827,140 @@ export default function App() {
               )}
             </button>
           )}
-          {/* Offline badge + "N answers waiting to sync" (tap to sync now). */}
+
           <OfflineChip
             online={online}
             pending={outbox.count}
             syncing={outbox.syncing}
             onSync={() => void outbox.flush()}
           />
+
           {!hasApiKey && signedIn && online && (
-            <span style={{ fontSize: 12, background: "#fef3c7", color: "#92400e", padding: "4px 10px", borderRadius: 999, fontWeight: 600 }}>
-              <Settings size={12} className="icon-inline" aria-hidden /> Setup
+            <span
+              style={{
+                fontSize: 11,
+                background: "var(--accent-light)",
+                color: "#9a3412",
+                padding: "4px 10px",
+                borderRadius: 999,
+                fontWeight: 700,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              <Settings size={11} aria-hidden /> Setup
             </span>
           )}
+
           {user ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, maxWidth: 210 }}>
-              {user.image ? (
-                /* eslint-disable-next-line @next/next/no-img-element */
-                <img
-                  src={user.image}
-                  alt=""
-                  style={{ width: 30, height: 30, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }}
-                />
-              ) : (
-                <div style={{
-                  width: 30,
-                  height: 30,
-                  borderRadius: "50%",
-                  background: "linear-gradient(135deg, #3b82f6, #7c3aed)",
-                  color: "white",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: 14,
-                  fontWeight: 800,
-                  flexShrink: 0,
-                }}>
-                  {(user.name ?? "?").charAt(0).toUpperCase()}
+            <div style={{ position: "relative" }}>
+              <button
+                data-user-trigger
+                className="user-menu-trigger"
+                onClick={() => setUserMenuOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={userMenuOpen}
+                aria-label="Account menu"
+              >
+                {user.image ? (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img src={user.image} alt="" className="user-menu-avatar" />
+                ) : (
+                  <span className="user-menu-avatar" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    {(user.name ?? "?").charAt(0).toUpperCase()}
+                  </span>
+                )}
+                <span className="user-menu-name">{user.name?.split(" ")[0] ?? "You"}</span>
+                <ChevronDown size={14} style={{ opacity: 0.5 }} aria-hidden />
+              </button>
+
+              {userMenuOpen && (
+                <div data-user-menu className="user-menu" role="menu">
+                  <div className="user-menu-header">
+                    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                      {user.image ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img src={user.image} alt="" style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover" }} />
+                      ) : (
+                        <div
+                          style={{
+                            width: 44,
+                            height: 44,
+                            borderRadius: "50%",
+                            background: "linear-gradient(135deg, #4F46E5, #7C3AED)",
+                            color: "white",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontWeight: 800,
+                            fontSize: 18,
+                          }}
+                        >
+                          {(user.name ?? "?").charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {user.name ?? "Signed in"}
+                        </div>
+                        {user.email && (
+                          <div style={{ fontSize: 12, color: "var(--text-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {user.email}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="user-menu-section">
+                    {isOwner && (
+                      <button
+                        className="user-menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          setUserMenuOpen(false);
+                          setPresenceOpen(true);
+                          void presenceRoster.refresh();
+                        }}
+                      >
+                        <span className="user-menu-item-icon">
+                          <Users size={16} />
+                        </span>
+                        <span style={{ flex: 1 }}>Who&apos;s online</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: presenceCount > 0 ? "var(--success)" : "var(--text-muted)" }}>
+                          {presenceRoster.loading ? "…" : `${presenceCount} online`}
+                        </span>
+                      </button>
+                    )}
+
+                    <div style={{ display: "flex", gap: 6, padding: "2px 0 6px", flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: online ? "var(--success)" : "var(--text-faint)", display: "inline-block" }} />
+                        {online ? "Online" : "Offline"}
+                      </span>
+                      {outbox.count > 0 && (
+                        <span style={{ fontSize: 11, fontWeight: 600, color: "var(--accent)" }}>{outbox.count} pending sync</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="user-menu-divider" />
+
+                  <div className="user-menu-section">
+                    <button
+                      className="user-menu-item danger"
+                      role="menuitem"
+                      onClick={() => void handleSignOut()}
+                    >
+                      <span className="user-menu-item-icon">
+                        <LogOut size={16} />
+                      </span>
+                      Sign out
+                    </button>
+                  </div>
                 </div>
               )}
-              <span style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {user.name?.split(" ")[0] ?? "Signed in"}
-              </span>
-              {/* Full reload on sign-out clears all in-memory deck state, and
-                  the handler wipes this device's offline copy first. */}
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={() => void handleSignOut()}
-                style={{ padding: "4px 8px", fontSize: 11, flexShrink: 0 }}
-                aria-label="Sign out"
-              >
-                Sign out
-              </button>
             </div>
           ) : (
             <button
@@ -7951,17 +7971,22 @@ export default function App() {
             </button>
           )}
         </div>
-      </div>
+      </header>
 
-      {/* Owner only: "Who's online" — a live presence roster fed by the
-          heartbeats every signed-in browser sends (see src/lib/presence.ts).
-          Renders nothing for normal users; the API 403s them anyway. */}
-      {isOwner && <OwnerPresenceBar />}
+      {/* Owner presence — compact trigger is now inside user menu; keep panel here */}
+      {presenceOpen && (
+        <PresencePanel
+          roster={presenceRoster.roster}
+          loading={presenceRoster.loading}
+          error={presenceRoster.error}
+          onRefresh={presenceRoster.refresh}
+          onClose={() => setPresenceOpen(false)}
+        />
+      )}
 
-      {/* Page content */}
-      <div className="page-content">
+      {/* Page content with rhythm */}
+      <div className="page-content section-stack">
         {renderContent()}
-        {/* Low-contrast footer — developer attribution moved from header */}
         <footer className="app-footer">
           <p className="app-footer-low">
             Developed by <strong>FBC BSIT 3-A</strong> · QuizTime · {new Date().getFullYear()}
@@ -7992,8 +8017,7 @@ export default function App() {
         ))}
       </nav>
 
-      {/* Course picker: opens on first login (until answered or "Maybe
-          later"), and any time after that from the Home course card. */}
+      {/* Course picker */}
       {courseModalOpen && (
         <CoursePickerModal
           initialCourse={course ?? null}
@@ -8004,7 +8028,7 @@ export default function App() {
         />
       )}
 
-      {/* Notification center sheet: inbox + daily push reminder opt-in. */}
+      {/* Notification center */}
       <NotificationCenter
         open={notificationsOpen}
         onClose={() => setNotificationsOpen(false)}
@@ -8013,12 +8037,8 @@ export default function App() {
       />
 
       <ToastHost />
-      {/* Nibbles 🐹 — floating study buddy (greets on login, tours first-timers,
-          cheers when a deck run finishes). */}
-      <MascotHost
-        userName={user?.name ?? null}
-        userId={user?.id != null ? String(user.id) : null}
-      />
+      {/* Nibbles — defined role: only shows in specific moments via MascotHost logic */}
+      <MascotHost userName={user?.name ?? null} userId={user?.id != null ? String(user.id) : null} />
     </div>
   );
 }
