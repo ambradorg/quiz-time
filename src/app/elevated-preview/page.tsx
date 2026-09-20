@@ -126,7 +126,7 @@ export default function ElevatedPreview() {
                   <div className="w-7 h-7 rounded-full bg-white/[0.10] border border-white/[0.14] flex items-center justify-center">
                     <Heart size={14} strokeWidth={2.5} className="text-white" />
                   </div>
-                  <span className="text-[11px] font-bold tracking-wide text-white/70 uppercase">Premium · Study Partner</span>
+                  <span className="text-[11px] font-bold tracking-wide text-white/70 uppercase">AI Study Partner</span>
                 </div>
 
                 <h3 className="m-0 text-[26px] font-[900] tracking-[-0.02em] leading-[1.1]">QuizTime</h3>
