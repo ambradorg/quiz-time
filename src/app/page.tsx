@@ -51,7 +51,6 @@ import {
   OfflineChip,
   OfflineNotice,
   OfflinePinButton,
-  OfflineReadyCard,
   OfflineRetryButton,
 } from "@/components/offline-ui";
 import {
@@ -85,6 +84,7 @@ import {
   ChartColumn,
   Check,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   CloudDownload,
   CloudOff,
@@ -105,7 +105,6 @@ import {
   FolderOpen,
   FolderPlus,
   GraduationCap,
-  Heart,
   House,
   Image as ImageIcon,
   Inbox,
@@ -1525,7 +1524,7 @@ function UploadPage({
               style={{ display: "none" }}
               onChange={handleFileChange}
             />
-            <div style={{ marginBottom: 10, color: "var(--accent-dark)" }}>
+            <div style={{ marginBottom: 10, color: "var(--accent-dark)", display: "flex", justifyContent: "center" }}>
               {picked.length ? (
                 <ImageIcon size={48} strokeWidth={1.5} aria-hidden />
               ) : (
@@ -3243,8 +3242,8 @@ function ReviewPage({
         </OfflineNotice>
       )}
 
-      {/* Today's workload */}
-      <div className="glass-card clay-streak" style={{ color: "white", padding: "18px 20px", display: "flex", alignItems: "center", gap: 16, marginBottom: 14 }}>
+      {/* Today's workload — dark card, from the mockup */}
+      <div className="glass-card" style={{ background: "#1a1a1d", border: "1px solid #2b2b31", boxShadow: "0 4px 16px rgba(26,26,29,0.25)", color: "white", padding: "18px 20px", display: "flex", alignItems: "center", gap: 16, marginBottom: 14 }}>
         <div style={{ lineHeight: 1, flexShrink: 0 }}>
           {counts.due > 0 ? <Brain size={42} strokeWidth={1.5} aria-hidden /> : <PartyPopper size={42} strokeWidth={1.5} aria-hidden />}
         </div>
@@ -5568,7 +5567,7 @@ function SessionsPage({
           <p style={{ color: "var(--text-muted)", fontSize: 14, margin: "0 0 16px", lineHeight: 1.6 }}>
             Upload a PDF or image to create your first flashcard set — or build one yourself, card by card.
           </p>
-          <button className="btn btn-primary btn-sm" onClick={() => handleEdit(null)}>
+          <button className="btn btn-secondary btn-sm" onClick={() => handleEdit(null)}>
             <PenLine />
             Create manually
           </button>
@@ -6325,8 +6324,8 @@ function StatsPage({
     color: string;
     bg: string;
   }[] = [
-    { label: "Cards studied", value: overall.cardsStudied, icon: Layers, color: "#3b82f6", bg: "#eff6ff" },
-    { label: "Study sessions", value: overall.studySessions, icon: Library, color: "#7c3aed", bg: "#f3e8ff" },
+    { label: "Cards studied", value: overall.cardsStudied, icon: Layers, color: "#1b1b1f", bg: "#f6f5f1" },
+    { label: "Study sessions", value: overall.studySessions, icon: Library, color: "#1b1b1f", bg: "#f6f5f1" },
     {
       label: "Answers",
       value: (
@@ -6338,29 +6337,29 @@ function StatsPage({
         </span>
       ),
       icon: Target,
-      color: "#10b981",
-      bg: "#ecfdf5",
+      color: "#457a40",
+      bg: "#e9f4e2",
     },
     {
       label: "Accuracy",
       value: overall.accuracy === null ? "—" : `${overall.accuracy}%`,
       icon: Star,
-      color: "#f59e0b",
-      bg: "#fffbeb",
+      color: "#93700d",
+      bg: "#faf0d8",
     },
     {
       label: "Due now (spaced review)",
       value: overall.dueNow ?? 0,
       icon: Brain,
-      color: "#7c3aed",
-      bg: "#f3e8ff",
+      color: "#1b1b1f",
+      bg: "#f6f5f1",
     },
     {
       label: `In rotation${overall.mature ? ` · ${overall.mature} mature` : ""}`,
       value: overall.reviewsTracked ?? 0,
       icon: Hourglass,
-      color: "#0891b2",
-      bg: "#ecfeff",
+      color: "#1b1b1f",
+      bg: "#f6f5f1",
     },
   ];
 
@@ -6391,10 +6390,13 @@ function StatsPage({
         </OfflineNotice>
       )}
 
-      {/* Streak hero */}
+      {/* Streak hero — dark card, from the mockup */}
       <div
-        className="glass-card clay-streak"
+        className="glass-card"
         style={{
+          background: "#1a1a1d",
+          border: "1px solid #2b2b31",
+          boxShadow: "0 4px 16px rgba(26,26,29,0.25)",
           color: "white",
           padding: "18px 20px",
           display: "flex",
@@ -6609,7 +6611,6 @@ function HomePage({
   onUpload,
   onSessions,
   onReview,
-  onCreateManual,
   dueCount,
   online,
   offlineDeckCount,
@@ -6623,8 +6624,6 @@ function HomePage({
   onUpload: () => void;
   onSessions: () => void;
   onReview: () => void;
-  /** Open the deck editor with a blank, hand-built deck. */
-  onCreateManual: () => void;
   dueCount: number;
   online: boolean;
   offlineDeckCount: number;
@@ -6637,35 +6636,35 @@ function HomePage({
   /** Open the course picker in edit mode. */
   onEditCourse: () => void;
 }) {
-    return (
+  const [howOpen, setHowOpen] = useState(false);
+  const offlineReady = offlineDeckCount > 0;
+  return (
     <div className="section-stack" style={{ padding: "20px 16px 24px" }}>
-      {/* Hero — primary framing, page-title typography */}
-      <div className="clay-hero">
-        <div className="meta-label" style={{ color: "rgba(255,255,255,0.7)", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ width: 28, height: 28, borderRadius: 999, background: "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <span style={{ display: "flex" }}><Sparkles size={14} strokeWidth={2.5} aria-hidden style={{ color: "white" }} /></span>
-          </span>
-          AI Study Partner
+      {/* Hero — dark card, from the mockup */}
+      <div style={{ background: "#1a1a1d", borderRadius: 20, padding: 22, color: "white", boxShadow: "0 10px 26px -14px rgba(26,26,29,0.55)" }}>
+        <div className="meta-label" style={{ color: "#b9b9c2", marginBottom: 10, display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}>
+          <Sparkles size={13} aria-hidden />
+          ai study partner
         </div>
-        <h1 className="page-title" style={{ color: "white", marginBottom: 8, fontSize: 32 }}>
+        <h1 className="page-title" style={{ color: "white", marginBottom: 6, fontSize: 28 }}>
           QuizTime
         </h1>
-        <p style={{ margin: "0 0 20px", fontSize: 14.5, color: "rgba(255,255,255,0.78)", lineHeight: 1.6, fontWeight: 500, maxWidth: 320 }}>
-          Upload your notes and I&apos;ll turn them into flashcards — Study, Exam, Identification, Enumeration, plus spaced repetition that sticks.
+        <p style={{ margin: "0 0 18px", fontSize: 14.5, color: "#c8c8cf", lineHeight: 1.55, fontWeight: 500 }}>
+          Turn your notes into flashcards that stick.
         </p>
         <div style={{ display: "flex", gap: 10 }}>
-          <button className="btn btn-primary" style={{ flex: 1, background: "white", color: "var(--primary)", fontWeight: 800 }} onClick={onUpload}>
+          <button className="btn btn-primary" style={{ flex: 1.12, background: "white", color: "#1b1b1f", fontWeight: 800 }} onClick={onUpload}>
             <Sparkles size={16} strokeWidth={2.5} aria-hidden />
-            Start Studying
+            Start studying
           </button>
-          <button className="btn btn-secondary" style={{ background: "rgba(255,255,255,0.12)", borderColor: "rgba(255,255,255,0.18)", color: "white" }} onClick={onSessions}>
-            <Library size={16} strokeWidth={2.5} aria-hidden />
-            My Sets
+          <button className="btn btn-secondary" style={{ flex: 1, background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.25)", color: "white", fontWeight: 600 }} onClick={onSessions}>
+            <Layers size={16} aria-hidden />
+            My sets
           </button>
         </div>
       </div>
 
-      {/* Course — secondary neutral, not primary */}
+      {/* Course — neutral card, tap to change */}
       <button
         className="card-elevated animate-fade-in"
         onClick={onEditCourse}
@@ -6678,131 +6677,160 @@ function HomePage({
           cursor: "pointer",
           textAlign: "left",
           border: course ? "1px solid var(--border)" : "1.5px dashed var(--border-strong)",
+          background: "var(--gray-50)",
         }}
       >
-        <span style={{ width: 40, height: 40, borderRadius: 12, background: "var(--secondary-light)", color: "var(--text-secondary)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <span style={{ width: 40, height: 40, borderRadius: 12, background: "white", boxShadow: "0 1px 2px rgba(0,0,0,0.06)", color: "var(--text-secondary)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <GraduationCap size={20} aria-hidden />
         </span>
         <span style={{ flex: 1, minWidth: 0 }}>
-          <span className="subsection-title" style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {course ? course : "Choose your course"}
+          <span style={{ display: "block", fontWeight: 700, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {course ?? "Choose your course"}
           </span>
-          <span className="meta-text" style={{ display: "block", color: "var(--text-muted)", marginTop: 2 }}>
-            {course ? "Tailored flashcards — tap to change" : "Tell QuizTime your course to tailor cards"}
+          <span style={{ display: "block", fontSize: 12.5, color: "var(--text-muted)", marginTop: 2 }}>
+            {course ? "Tap to change" : "Tell QuizTime your course to tailor cards"}
           </span>
         </span>
-        <Pencil size={14} aria-hidden style={{ color: "var(--text-faint)", flexShrink: 0 }} />
+        <ChevronRight size={18} aria-hidden style={{ color: "var(--text-faint)", flexShrink: 0 }} />
       </button>
 
-      {/* Offline + Due — zoned with rhythm */}
-      <div className="zone-muted" style={{ borderRadius: 18, padding: 12 }}>
-        <OfflineReadyCard
-          deckCount={offlineDeckCount}
-          cardCount={offlineCardCount}
-          savedAt={offlineSavedAt}
-          online={online}
-          busy={offlineBusy}
-          onDownloadAll={onDownloadAll}
-          onOpenSets={onSessions}
-        />
-        {dueCount > 0 && (
+      {/* Offline readiness — green when this device has sets (mockup) */}
+      <div
+        className="animate-fade-in"
+        style={{
+          borderRadius: 16,
+          padding: 14,
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          background: offlineReady ? "#e9f4e2" : "var(--gray-50)",
+          border: offlineReady ? "1px solid transparent" : "1.5px dashed var(--border-strong)",
+        }}
+      >
+        <span style={{ color: offlineReady ? "#457a40" : "var(--text-muted)", display: "flex", flexShrink: 0 }} aria-hidden>
+          {offlineReady ? <CircleCheckBig size={22} /> : <CloudDownload size={22} />}
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: 14.5, fontWeight: 800 }}>
+            {offlineReady ? "Offline study ready" : "Offline study"}
+          </p>
+          <p style={{ margin: "2px 0 0", fontSize: 12.5, color: "var(--text-muted)" }}>
+            {offlineReady
+              ? `${offlineDeckCount} set${offlineDeckCount === 1 ? "" : "s"} · ${offlineCardCount} card${offlineCardCount === 1 ? "" : "s"}${offlineSavedAt ? ` · updated ${formatSavedAgo(offlineSavedAt)}` : ""}`
+              : "Save your sets to study with no signal — answers sync when you're back."}
+          </p>
+        </div>
+        {online ? (
           <button
-            className="card-accent animate-fade-in"
-            onClick={onReview}
-            style={{
-              width: "100%",
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: "14px 16px",
-              marginTop: 12,
-              cursor: "pointer",
-              textAlign: "left",
-              /* No inline border: .card-accent already sets
-                 `1px solid var(--accent-border)`, the pairing that goes with
-                 its --accent-soft background. */
-            }}
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={onDownloadAll}
+            disabled={offlineBusy}
+            style={{ flexShrink: 0, padding: 8, color: offlineReady ? "#457a40" : "var(--text-muted)", background: "rgba(255,255,255,0.65)" }}
+            title={offlineReady ? "Refresh the offline copy" : "Download all sets"}
+            aria-label={offlineReady ? "Refresh the offline copy" : "Download all sets"}
           >
-            <span style={{ width: 40, height: 40, borderRadius: 12, background: "var(--accent-light)", color: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <Brain size={20} aria-hidden />
-            </span>
-            <span style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ display: "block", fontSize: 14, fontWeight: 700, color: "var(--text-primary)" }}>
-                {dueCount} card{dueCount === 1 ? "" : "s"} due for review
-              </span>
-              <span style={{ display: "block", fontSize: 12.5, color: "var(--text-muted)", marginTop: 2 }}>
-                Spaced repetition — right before you forget
-              </span>
-            </span>
-            <span style={{ background: "var(--accent)", color: "white", fontSize: 11, fontWeight: 800, padding: "4px 8px", borderRadius: 999, flexShrink: 0 }}>
-              {dueCount}
-            </span>
+            {offlineBusy ? (
+              <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2, margin: 0 }} aria-hidden />
+            ) : (
+              <CloudDownload size={16} />
+            )}
+          </button>
+        ) : (
+          <button type="button" className="btn btn-white-clay btn-sm" onClick={onSessions} style={{ flexShrink: 0 }}>
+            My Sets
           </button>
         )}
       </div>
 
-      <div className="divider" />
-
-      {/* How it works — section-title + cards with secondary styling */}
-      <section>
-        <h3 className="section-title" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
-          <Lightbulb size={16} strokeWidth={2.5} aria-hidden />
-          How it works
-        </h3>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          {[
-            { icon: FileText, title: "Upload PDF", desc: "Any PDF document" },
-            { icon: Camera, title: "Take Photo", desc: "Snap notes" },
-            { icon: BookOpen, title: "Study Mode", desc: "Flip to reveal" },
-            { icon: ClipboardCheck, title: "Exam Mode", desc: "4 choices, scored" },
-            { icon: Type, title: "Identification", desc: "Type from memory" },
-            { icon: ListOrdered, title: "Enumeration", desc: "List every item" },
-            { icon: Brain, title: "Spaced Review", desc: "Due cards only" },
-          ].map((f, i) => (
-            <div key={i} className="card-elevated" style={{ padding: "14px 12px" }}>
-              <div style={{ width: 32, height: 32, borderRadius: 10, background: "var(--secondary-light)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
-                <f.icon size={16} strokeWidth={2} aria-hidden style={{ color: "var(--text-secondary)" }} />
-              </div>
-              <p className="subsection-title" style={{ fontSize: 13, margin: "0 0 2px" }}>{f.title}</p>
-              <p className="meta-text" style={{ margin: 0, color: "var(--text-muted)", fontSize: 11.5 }}>{f.desc}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <div className="divider" />
-
-      {/* Study Tips — muted zone with distinct background */}
-      <div className="zone-muted" style={{ padding: "16px", borderRadius: 18 }}>
-        <h3 className="section-title" style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 7, fontSize: 14 }}>
-          <Heart size={14} aria-hidden />
-          Study Tips
-        </h3>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {[
-            "Review cards daily for best retention!",
-            "Focus on 'Still Learning' cards more.",
-            "Study first, then test in Exam / Identify / Enumerate.",
-            "Explain answers in your own words.",
-          ].map((tip, i) => (
-            <div key={i} style={{ display: "flex", gap: 8, fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 }}>
-              <Star size={12} aria-hidden style={{ flexShrink: 0, marginTop: 4, color: "var(--accent)" }} />
-              <span>{tip}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Actions — primary only for main, secondary for less important */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingTop: 4 }}>
-        <button className="btn btn-primary" style={{ width: "100%" }} onClick={onCreateManual}>
-          <PenLine />
-          Create a Deck Manually
+      {/* Due-for-review nudge — only when something is actually due */}
+      {dueCount > 0 && (
+        <button
+          className="animate-fade-in"
+          onClick={onReview}
+          style={{
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "14px 16px",
+            cursor: "pointer",
+            textAlign: "left",
+            font: "inherit",
+            background: "#eef2ff",
+            border: "1px solid #c7d2fe",
+            borderRadius: 16,
+          }}
+        >
+          <span style={{ width: 40, height: 40, borderRadius: 12, background: "white", color: "#4f46e5", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Brain size={20} aria-hidden />
+          </span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "block", fontSize: 14, fontWeight: 700, color: "var(--text-primary)" }}>
+              {dueCount} card{dueCount === 1 ? "" : "s"} due for review
+            </span>
+            <span style={{ display: "block", fontSize: 12.5, color: "var(--text-muted)", marginTop: 2 }}>
+              Spaced repetition — right before you forget
+            </span>
+          </span>
+          <span style={{ background: "#4f46e5", color: "white", fontSize: 11, fontWeight: 800, padding: "4px 8px", borderRadius: 999, flexShrink: 0 }}>
+            {dueCount}
+          </span>
         </button>
-        <button className="btn btn-secondary" style={{ width: "100%" }} onClick={onSessions}>
-          <Library />
-          View My Study Sets
+      )}
+
+      {/* New here? — collapsible intro: feature grid + study tips */}
+      <div style={{ background: "white", border: "1px solid var(--border)", borderRadius: 16, overflow: "hidden" }}>
+        <button
+          type="button"
+          onClick={() => setHowOpen((v) => !v)}
+          aria-expanded={howOpen}
+          style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", background: "none", border: "none", cursor: "pointer", font: "inherit", textAlign: "left", color: "var(--text)" }}
+        >
+          <Lightbulb size={18} aria-hidden style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+          <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>New here? See how QuizTime works</span>
+          <ChevronDown
+            size={18}
+            aria-hidden
+            style={{ color: "var(--text-faint)", flexShrink: 0, transform: howOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s ease" }}
+          />
         </button>
+        {howOpen && (
+          <div style={{ padding: "2px 16px 16px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+              {[
+                { icon: FileText, title: "Upload PDF", desc: "Any PDF document" },
+                { icon: Camera, title: "Take Photo", desc: "Snap notes" },
+                { icon: BookOpen, title: "Study Mode", desc: "Flip to reveal" },
+                { icon: ClipboardCheck, title: "Exam Mode", desc: "4 choices, scored" },
+                { icon: Type, title: "Identification", desc: "Type from memory" },
+                { icon: ListOrdered, title: "Enumeration", desc: "List every item" },
+                { icon: Brain, title: "Spaced Review", desc: "Due cards only" },
+              ].map((f, i) => (
+                <div key={i} className="card-elevated" style={{ padding: "14px 12px" }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 10, background: "var(--secondary-light)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
+                    <f.icon size={16} strokeWidth={2} aria-hidden style={{ color: "var(--text-secondary)" }} />
+                  </div>
+                  <p className="subsection-title" style={{ fontSize: 13, margin: "0 0 2px" }}>{f.title}</p>
+                  <p className="meta-text" style={{ margin: 0, color: "var(--text-muted)", fontSize: 11.5 }}>{f.desc}</p>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {[
+                "Review cards daily for best retention!",
+                "Focus on 'Still Learning' cards more.",
+                "Study first, then test in Exam / Identify / Enumerate.",
+                "Explain answers in your own words.",
+              ].map((tip, i) => (
+                <div key={i} style={{ display: "flex", gap: 8, fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+                  <Star size={12} aria-hidden style={{ flexShrink: 0, marginTop: 4, color: "var(--accent)" }} />
+                  <span>{tip}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -7651,7 +7679,6 @@ export default function App() {
           onUpload={() => setTab("upload")}
           onSessions={() => setTab("sessions")}
           onReview={() => setTab("review")}
-          onCreateManual={() => setDeckEditor({ sessionId: null, origin: "home" })}
           dueCount={dueCount}
           online={online}
           offlineDeckCount={offlineInfo.deckCount}
