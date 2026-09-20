@@ -634,9 +634,16 @@ export function MascotHost({
   const dozing = !bubble && ambient === "sleepy";
   const thinking = !bubble && ambient === "thinking";
   const isLastTutorialStep = bubble?.kind === "tutorial" && bubble.index >= bubble.steps.length - 1;
+  // Defined role: only show floating when it has something to say, is peeking during a run, or is in a special ambient state (sleepy/thinking).
+  // Idle floating with no message is now hidden — Nibbles appears purposefully for onboarding, streaks, celebrations, and hints.
+  const shouldShow = Boolean(bubble || peeking || ambient !== "idle");
 
   return (
-    <div className={`mascot-wrap${peeking && !bubble ? " mascot-peeking" : ""}`}>
+    <div
+      className={`mascot-wrap${peeking && !bubble ? " mascot-peeking" : ""}${
+        !shouldShow ? " mascot-hidden" : ""
+      }`}
+    >
       {/* Preload every pose so a mood swap never flickers. */}
       <div style={{ display: "none" }} aria-hidden>
         {Object.values(MASCOT_IMAGES).map((src) => (
@@ -735,6 +742,29 @@ export function MascotHost({
           </span>
         )}
       </button>
+    </div>
+  );
+}
+
+/**
+ * Inline mascot for empty states, onboarding cards, and loading — consistent
+ * placement/sizing, not floating. Use this where the old floating hamster
+ * used to feel loose.
+ */
+export function MascotInline({
+  mood = "idle",
+  text,
+  size = 72,
+}: {
+  mood?: MascotMood;
+  text?: string;
+  size?: number;
+}) {
+  return (
+    <div className="mascot-inline">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={MASCOT_IMAGES[mood]} alt="" className="mascot-inline-img" style={{ width: size, height: size }} draggable={false} />
+      {text && <div className="mascot-inline-bubble">{text}</div>}
     </div>
   );
 }

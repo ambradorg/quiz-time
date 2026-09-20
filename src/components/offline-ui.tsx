@@ -42,11 +42,9 @@ export function OfflineChip({
     <>
       {!online && (
         <span
-          className="badge animate-fade-in"
+          className="badge badge-accent animate-fade-in"
           title="No connection — showing what's saved on this device"
           style={{
-            background: "#fed7aa",
-            color: "#9a3412",
             display: "inline-flex",
             alignItems: "center",
             gap: 4,
@@ -59,7 +57,7 @@ export function OfflineChip({
       {pending > 0 && (
         <button
           type="button"
-          className="badge"
+          className="badge badge-primary"
           onClick={onSync}
           disabled={syncing}
           title={
@@ -68,8 +66,6 @@ export function OfflineChip({
               : `${pending} answer${pending === 1 ? "" : "s"} saved on this device — they sync when you're back online`
           }
           style={{
-            background: online ? "#dbeafe" : "#e0e7ff",
-            color: online ? "#1d4ed8" : "#4338ca",
             border: "none",
             cursor: syncing ? "wait" : "pointer",
             display: "inline-flex",
@@ -110,8 +106,8 @@ export function OfflineNotice({
   const Icon: LucideIcon = tone === "warn" ? CloudOff : HardDriveDownload;
   const palette =
     tone === "warn"
-      ? { bg: "#fff7ed", border: "#fed7aa", fg: "#9a3412" }
-      : { bg: "#eff6ff", border: "#bfdbfe", fg: "#1e40af" };
+      ? { bg: "var(--accent-soft)", border: "var(--accent-border)", fg: "var(--accent-text)" }
+      : { bg: "var(--primary-soft)", border: "var(--primary-border)", fg: "var(--primary-hover)" };
   return (
     <div
       role="status"

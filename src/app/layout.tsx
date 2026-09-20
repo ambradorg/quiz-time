@@ -22,7 +22,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#2563eb",
+  themeColor: "#4F46E5",
 };
 
 // MAINTENANCE_MODE is read from process.env per request (see
@@ -43,12 +43,13 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     <html lang="en">
       <head>
         <link rel="apple-touch-icon" href="/logo.png" />
-        {/* Rounded display font for the soft-clay look. Stylesheet <link> on
-            purpose: next/font would hard-fail the build when Google Fonts is
-            unreachable, while this degrades gracefully to system fonts. */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        {/* Sora = display/headings, Inter = body UI — distinctive pairing, still highly legible.
+            Stylesheet <link> on purpose: next/font would hard-fail when Google Fonts is unreachable. */}
         {/* eslint-disable-next-line @next/next/no-page-custom-font */}
         <link
-          href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@600;700;800&display=swap"
           rel="stylesheet"
         />
       </head>
