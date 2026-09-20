@@ -101,9 +101,15 @@
   --violet: #7C3AED;
   --cyan: #06B6D4;
   --navy: #111827;
-  --accent: var(--primary);
-  --accent-light: var(--primary-border);
-  --accent-dark: var(--primary-hover);
+  /* NOTE: do NOT redefine `--accent` here. It is a first-class token of this
+     palette (#F97316, warm orange — streak, badges, highlights, notifications)
+     and a second declaration in the same `:root` block silently wins, which
+     used to repaint every accent surface indigo while its neighbours
+     (`--accent-hover`, `--accent-soft`, `--accent-border`, `--accent-text` and
+     the hard-coded rgba(249,115,22,…) shadows) stayed orange. The legacy clay
+     aliases below therefore map onto the *orange* ramp, not the primary one. */
+  --accent-light: var(--accent-soft);
+  --accent-dark: var(--accent-text);
   --yellow: var(--accent);
   --green: var(--success);
   --red: var(--danger);

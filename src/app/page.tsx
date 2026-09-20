@@ -6718,7 +6718,9 @@ function HomePage({
               marginTop: 12,
               cursor: "pointer",
               textAlign: "left",
-              border: "1px solid var(--accent-light)",
+              /* No inline border: .card-accent already sets
+                 `1px solid var(--accent-border)`, the pairing that goes with
+                 its --accent-soft background. */
             }}
           >
             <span style={{ width: 40, height: 40, borderRadius: 12, background: "var(--accent-light)", color: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
