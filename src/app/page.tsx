@@ -7562,6 +7562,29 @@ export default function App() {
     }
   };
 
+  // Close user menu on outside click / escape.
+  // ⚠️ HOOK ORDER: this must stay ABOVE the first-visit gate below — it ran
+  // below it once (PR "UI polish"), which made sign-in render one extra hook
+  // and crashed the app with React #310 "Maximum update depth exceeded".
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setUserMenuOpen(false);
+    };
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-user-menu]") && !target.closest("[data-user-trigger]")) {
+        setUserMenuOpen(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onClick);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onClick);
+    };
+  }, [userMenuOpen]);
+
   // First-visit gate: unsigned visitors (and the session-loading splash) see
   // the login page with the large logo — never the rest of the app. Offline
   // starts resolve through the cached profile, so a saved account boots
@@ -7768,26 +7791,6 @@ export default function App() {
     { id: "review" as Tab, label: "Review", Icon: Brain, badge: dueCount },
     { id: "stats" as Tab, label: "Stats", Icon: ChartColumn },
   ];
-
-  // Close user menu on outside click / escape
-  useEffect(() => {
-    if (!userMenuOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setUserMenuOpen(false);
-    };
-    const onClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest("[data-user-menu]") && !target.closest("[data-user-trigger]")) {
-        setUserMenuOpen(false);
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    document.addEventListener("mousedown", onClick);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("mousedown", onClick);
-    };
-  }, [userMenuOpen]);
 
   const presenceOnline = presenceRoster.roster?.users.filter((u) => u.online) ?? [];
   const presenceCount = presenceRoster.roster?.online ?? 0;
