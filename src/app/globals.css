@@ -242,6 +242,9 @@ h1, h2, h3 {
 @media (min-width: 640px) {
   body {
     padding: 32px 20px;
+    /* Vertical share of `body`'s padding — full-height screens subtract it so
+       they never spill past the first viewport. */
+    --viewport-pad-y: 64px;
     display: flex;
     justify-content: center;
     align-items: flex-start;
@@ -271,6 +274,7 @@ h1, h2, h3 {
 @media (min-width: 1024px) {
   body {
     padding: 40px 24px;
+    --viewport-pad-y: 80px;
   }
   .app-shell {
     max-width: 460px;
@@ -1396,27 +1400,42 @@ h1, h2, h3 {
 /* ── Login ─────────────────────────────────────────────────────────────────── */
 .login-screen {
   min-height: 100vh;
-  min-height: 100dvh;
+  /* `body` gets vertical padding from 640px up (32px, then 40px at 1024px) —
+     subtracting it keeps the screen inside the first viewport instead of
+     always overflowing by the padding. */
+  min-height: calc(100dvh - var(--viewport-pad-y, 0px));
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 24px 16px 32px;
-  gap: 16px;
+  /* `safe` keeps the hero reachable: when the card is taller than a small
+     phone the content overflows downwards instead of clipping off the top. */
+  justify-content: safe center;
+  padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+  gap: clamp(10px, 2.4vh, 16px);
   background: var(--viewport-bg);
   background-image:
     radial-gradient(800px 400px at 10% -10%, rgba(79,70,229,0.12), transparent 60%),
     radial-gradient(600px 400px at 90% 10%, rgba(249,115,22,0.10), transparent 60%);
 }
 
+/* Hero: square crop of the mascot (public/images/login-hero.webp), sized off
+   BOTH axes so it stays modest on a phone — the old `min(88vw, 400px)` logo
+   filled the whole first screen and pushed the sign-in button below the fold
+   — and never towers over a short window. */
 .login-logo {
-  width: min(88vw, 400px);
+  width: clamp(112px, min(38vw, 28vh), 208px);
   height: auto;
+  aspect-ratio: 1;
+  object-fit: cover;
   display: block;
-  border-radius: var(--radius-xl);
+  /* 25.9% = the corner radius the artwork itself has (179px on the 1024px
+     master, cropped to 692px), so the frame follows the logo's own rounded
+     square instead of leaving white slivers in the corners. */
+  border-radius: 25.9%;
   border: 1px solid var(--border);
   background: white;
   box-shadow: var(--shadow-md);
+  flex-shrink: 0;
 }
 
 .login-panel {
@@ -1482,6 +1501,48 @@ h1, h2, h3 {
   font-weight: 500;
   letter-spacing: 0.02em;
   color: var(--text-faint);
+}
+
+/* Narrow phones (≤360px wide): trim the card so even the heaviest variant —
+   an auth error plus the offline escape hatch — still fits one screen.
+   Declared after the rules above so it wins the cascade. */
+@media (max-width: 359px) {
+  .login-panel {
+    padding: 18px 16px 16px;
+  }
+  .login-title {
+    font-size: 20px;
+  }
+  .login-copy {
+    font-size: 13.5px;
+    margin-bottom: 16px;
+  }
+}
+
+/* Landscape phones have ~375px of height to work with: don't stack — put the
+   hero beside the card and let the developer credit wrap under both. */
+@media (orientation: landscape) and (max-height: 560px) {
+  .login-screen {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-content: center;
+    gap: 12px 18px;
+    padding: 14px 20px;
+  }
+  .login-logo {
+    width: clamp(96px, min(38vh, 28vw), 208px);
+  }
+  .login-panel {
+    padding: 18px 20px 14px;
+  }
+  .login-copy {
+    margin-bottom: 14px;
+  }
+  .login-developer {
+    flex-basis: 100%;
+    margin-top: 0;
+    text-align: center;
+  }
 }
 
 /* ── Review / SRS ──────────────────────────────────────────────────────────── */

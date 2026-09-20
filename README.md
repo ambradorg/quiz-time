@@ -476,12 +476,16 @@ result agree.
 
 ## Accounts & Sign-in with Google
 
-Visitors see a **login page first** (large QuizTime logo + Continue with
-Google). After sign-in they land in the app. Decks are private to each
-account: uploading, generating, studying and deleting study sets all require
-a session, and every query is scoped to the signed-in user (there is no
-anonymous data, so nobody can read or delete somebody else's decks by
-guessing an id).
+Visitors see a **login page first** (the QuizTime mascot as a hero above a
+Continue with Google card). The hero is a pre-cropped square of the mascot —
+`public/images/login-hero.webp`, cropped from the bottom-right corner of the
+1024px `public/images/logo.png` master because the rest of that square is
+empty cream — and it is sized from both the viewport width *and* height so the
+whole screen (hero + card + button) fits a phone without scrolling. After
+sign-in visitors land in the app. Decks are private to each account:
+uploading, generating, studying and deleting study sets all require a session,
+and every query is scoped to the signed-in user (there is no anonymous data,
+so nobody can read or delete somebody else's decks by guessing an id).
 
 ### 1. Create the Google OAuth client
 

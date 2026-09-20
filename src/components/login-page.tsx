@@ -34,8 +34,9 @@ function GoogleMark() {
 
 /**
  * Full-screen login shown to visitors before the rest of the app.
- * The QuizTime logo is the hero — sized large so it reads as the brand,
- * not a tiny favicon.
+ * The hero is a pre-cropped square of the QuizTime mascot (see
+ * public/images/login-hero.webp) — sized so the whole screen still fits one
+ * phone viewport instead of pushing the sign-in button below the fold.
  */
 export function LoginPage({
   loading = false,
@@ -134,9 +135,11 @@ export function LoginPage({
     <main className="login-screen">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/images/logo.png"
+        src="/images/login-hero.webp"
         alt="QuizTime — Flashcard Quiz Maker"
         className="login-logo animate-fade-in"
+        width={640}
+        height={640}
       />
 
       <div className="login-panel glass-card animate-slide-up">
