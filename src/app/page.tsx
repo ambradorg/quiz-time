@@ -6641,49 +6641,84 @@ function HomePage({
 }) {
   return (
     <div style={{ padding: "20px 16px" }}>
-      {/* Hero */}
+      {/* Hero — Elevated: Digital Indigo #1e1b4b matte, icon capsules stroke 2.5, inset glow buttons */}
       <div
         className="clay-hero"
         style={{
-          padding: "28px 24px",
+          padding: "26px 22px 22px",
           marginBottom: 24,
         }}
       >
+        {/* Subtle grain / highlight, no aggressive blobs */}
         <div style={{
           position: "absolute",
-          top: -20,
-          right: -20,
-          width: 120,
-          height: 120,
-          background: "rgba(255,255,255,0.1)",
-          borderRadius: "50%",
+          inset: 0,
+          background: "radial-gradient(520px 320px at 18% 0%, rgba(255,255,255,0.07), transparent 60%)",
+          pointerEvents: "none",
         }} />
-        <div style={{
-          position: "absolute",
-          bottom: -30,
-          right: 30,
-          width: 80,
-          height: 80,
-          background: "rgba(255,255,255,0.08)",
-          borderRadius: "50%",
-        }} />
-        <div className="animate-heartbeat" style={{ marginBottom: 12 }}>
-          <Heart size={48} strokeWidth={1.5} aria-hidden />
+        {/* Top row: capsule label */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, position: "relative" }}>
+          <span className="icon-capsule">
+            <span className="icon-capsule-dot">
+              <Sparkles size={14} strokeWidth={2.5} aria-hidden style={{ color: "white" }} />
+            </span>
+            <span className="icon-capsule-label">AI Study Partner</span>
+          </span>
         </div>
-        <h1 style={{ margin: "0 0 6px", fontSize: 26, fontWeight: 900, lineHeight: 1.2 }}>
-          QuizTime
-        </h1>
-        <p style={{ margin: "0 0 20px", fontSize: 14, opacity: 0.9, lineHeight: 1.5 }}>
-          Upload your study material and I&apos;ll turn it into fun flashcards — then review them with Study, Exam, Identification or Enumeration mode, and let spaced repetition tell you what to review today.
-        </p>
-        <button
-          className="btn btn-white-clay"
-          style={{ fontWeight: 800, fontSize: 15 }}
-          onClick={onUpload}
-        >
-          <Sparkles />
-          Start Studying
-        </button>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 14, position: "relative" }}>
+          <div className="icon-capsule-dot" style={{ width: 52, height: 52, background: "rgba(255,255,255,0.10)", borderColor: "rgba(255,255,255,0.14)" }}>
+            <Heart size={26} strokeWidth={2.5} aria-hidden style={{ color: "white" }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <h1 style={{ margin: "0 0 6px", fontSize: 28, fontWeight: 900, lineHeight: 1.1, letterSpacing: "-0.02em" }}>
+              QuizTime
+            </h1>
+            <p style={{ margin: "0 0 18px", fontSize: 13.5, color: "rgba(255,255,255,0.72)", lineHeight: 1.6, fontWeight: 500 }}>
+              Upload your study material and I&apos;ll turn it into fun flashcards — Study, Exam, Identification or Enumeration, plus spaced repetition.
+            </p>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10, position: "relative" }}>
+          <button
+            className="btn btn-white-clay"
+            style={{ fontWeight: 800, fontSize: 14.5, padding: "12px 20px", flex: 1 }}
+            onClick={onUpload}
+          >
+            <Sparkles size={16} strokeWidth={2.5} aria-hidden />
+            Start Studying
+          </button>
+          <button
+            className="btn"
+            style={{
+              fontWeight: 700,
+              fontSize: 14,
+              padding: "12px 16px",
+              background: "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.12)",
+              color: "rgba(255,255,255,0.85)",
+              boxShadow: "inset 0 1px 1px rgba(255,255,255,0.12), 0 4px 12px rgba(0,0,0,0.12)",
+            }}
+            onClick={onSessions}
+          >
+            <Library size={16} strokeWidth={2.5} aria-hidden />
+            My Sets
+          </button>
+        </div>
+        {/* Feature capsules row */}
+        <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap", position: "relative" }}>
+          {[
+            { icon: Brain, label: "Spaced" },
+            { icon: ClipboardCheck, label: "Exam" },
+            { icon: Type, label: "Identify" },
+          ].map((f) => (
+            <span key={f.label} className="icon-capsule-feature">
+              <span className="icon-capsule-dot" style={{ width: 22, height: 22 }}>
+                <f.icon size={12} strokeWidth={2.5} aria-hidden style={{ color: "white" }} />
+              </span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.68)" }}>{f.label}</span>
+            </span>
+          ))}
+        </div>
       </div>
 
       {/* Course card: the profile course at a glance, tap to change. This is
@@ -6768,9 +6803,9 @@ function HomePage({
         </button>
       )}
 
-      {/* Features */}
+      {/* Features — Elevated with capsule icon borders stroke 2.5 */}
       <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 14px", display: "flex", alignItems: "center", gap: 7 }}>
-        <Lightbulb size={17} aria-hidden />
+        <Lightbulb size={17} strokeWidth={2.5} aria-hidden />
         How it works
       </h3>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
@@ -6788,8 +6823,21 @@ function HomePage({
             className="glass-card animate-fade-in"
             style={{ padding: "16px 14px", animationDelay: `${i * 0.1}s` }}
           >
-            <div style={{ marginBottom: 8, color: "var(--accent-dark)" }}>
-              <f.icon size={28} strokeWidth={1.75} aria-hidden />
+            <div
+              style={{
+                marginBottom: 10,
+                width: 36,
+                height: 36,
+                borderRadius: 999,
+                background: "rgba(30,27,75,0.06)",
+                border: "1px solid rgba(30,27,75,0.08)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                boxShadow: "inset 0 1px 1px rgba(255,255,255,0.8)",
+              }}
+            >
+              <f.icon size={18} strokeWidth={2.5} aria-hidden style={{ color: "#1e1b4b" }} />
             </div>
             <p style={{ margin: "0 0 4px", fontWeight: 700, fontSize: 14 }}>{f.title}</p>
             <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>{f.desc}</p>
@@ -7821,7 +7869,6 @@ export default function App() {
             QuizTime
           </h1>
           <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)" }}>Your AI Study Partner</p>
-          <p className="app-developer">Developed by: FBC BSIT 3-A</p>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
           {signedIn && (
@@ -7914,6 +7961,12 @@ export default function App() {
       {/* Page content */}
       <div className="page-content">
         {renderContent()}
+        {/* Low-contrast footer — developer attribution moved from header */}
+        <footer className="app-footer">
+          <p className="app-footer-low">
+            Developed by <strong>FBC BSIT 3-A</strong> · QuizTime · {new Date().getFullYear()}
+          </p>
+        </footer>
       </div>
 
       {/* Bottom nav */}

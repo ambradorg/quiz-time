@@ -287,23 +287,22 @@ body {
   touch-action: manipulation;
 }
 .btn:active { transform: translateY(4px) scale(0.98); }
+/* Elevated primary: crisp inset highlight + subtle color-matched glow — no heavy 5px drop. */
 .btn-primary {
-  background: linear-gradient(180deg, #5b9cff 0%, #3b82f6 45%, #2f6bee 100%);
+  background: linear-gradient(180deg, #6366f1 0%, #4f46e5 100%);
   color: white;
-  border-color: rgba(255, 255, 255, 0.35);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  border-color: rgba(255, 255, 255, 0.14);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.15);
   box-shadow:
-    inset 0 2px 3px rgba(255, 255, 255, 0.45),
-    inset 0 -4px 6px rgba(0, 0, 0, 0.18),
-    0 5px 0 #1e40af,
-    0 12px 24px rgba(37, 99, 235, 0.35);
+    inset 0 1px 2px rgba(255, 255, 255, 0.4),
+    0 4px 12px rgba(99, 102, 241, 0.28),
+    0 8px 24px rgba(99, 102, 241, 0.20);
 }
 .btn-primary:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
   box-shadow:
-    inset 0 2px 3px rgba(255, 255, 255, 0.45),
-    inset 0 -4px 6px rgba(0, 0, 0, 0.18),
-    0 1px 0 #1e40af,
-    0 4px 10px rgba(37, 99, 235, 0.3);
+    inset 0 1px 1px rgba(255, 255, 255, 0.3),
+    0 2px 8px rgba(99, 102, 241, 0.20);
 }
 .btn-secondary {
   background: #ffffff;
@@ -358,23 +357,21 @@ body {
     0 1px 0 #9f1239,
     0 4px 10px rgba(244, 63, 94, 0.3);
 }
-/* White key that sits on blue heroes. */
+/* White key that sits on Digital Indigo hero — elevated with inset + soft glow. */
 .btn-white-clay {
   background: #ffffff;
-  color: var(--blue-dark);
-  border-color: #ffffff;
+  color: #1e1b4b;
+  border-color: rgba(255, 255, 255, 0.9);
   box-shadow:
-    inset 0 2px 3px rgba(255, 255, 255, 1),
-    inset 0 -4px 8px rgba(43, 80, 180, 0.12),
-    0 5px 0 #1e3a8a,
-    0 12px 24px rgba(0, 0, 0, 0.25);
+    inset 0 1px 2px rgba(255, 255, 255, 0.9),
+    0 4px 12px rgba(255, 255, 255, 0.12),
+    0 8px 24px rgba(99, 102, 241, 0.25);
 }
 .btn-white-clay:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
   box-shadow:
-    inset 0 2px 3px rgba(255, 255, 255, 1),
-    inset 0 -4px 8px rgba(43, 80, 180, 0.12),
-    0 1px 0 #1e3a8a,
-    0 4px 10px rgba(0, 0, 0, 0.2);
+    inset 0 1px 1px rgba(255, 255, 255, 0.6),
+    0 2px 8px rgba(0, 0, 0, 0.12);
 }
 .btn-ghost {
   background: rgba(255, 255, 255, 0.72);
@@ -611,12 +608,77 @@ body {
   min-height: 100vh;
 }
 
+/* Developer credit — removed from header, now low-contrast footer only */
 .app-developer {
   margin: 1px 0 0;
   color: var(--text-muted);
   font-size: 10px;
   font-weight: 600;
   line-height: 1.2;
+}
+.app-footer {
+  margin-top: 32px;
+  padding: 16px 20px calc(20px + env(safe-area-inset-bottom));
+  text-align: center;
+  border-top: 1px solid rgba(30, 27, 75, 0.06);
+  background: rgba(248, 247, 255, 0.6);
+}
+.app-footer-low {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: rgba(30, 27, 75, 0.28);
+  line-height: 1.5;
+}
+.app-footer-low strong {
+  font-weight: 700;
+  color: rgba(30, 27, 75, 0.38);
+}
+
+/* Elevated icon capsules — soft semi-transparent, thicker stroke 2.5 */
+.icon-capsule {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.icon-capsule-dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.10);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.2);
+}
+.icon-capsule-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.70);
+  text-transform: uppercase;
+}
+.icon-capsule-feature {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  backdrop-filter: blur(8px);
+}
+.icon-capsule-feature .icon-capsule-dot {
+  width: 24px;
+  height: 24px;
 }
 
 /* ── Mode picker: hero clay tiles ─────────────────────────────────────────── */
@@ -986,15 +1048,16 @@ body {
     inset 0 -8px 16px rgba(16, 185, 129, 0.12);
 }
 
-/* Home hero + stats streak banner — big glossy clay slabs. */
+/* Home hero — elevated: solid Digital Indigo matte, breathing room for content to pop.
+   Flat tone #1e1b4b replaces the muddy blue→purple gradient. */
 .clay-hero {
-  background: linear-gradient(165deg, #5b9cff 0%, #4f6df5 48%, #7c3aed 100%);
+  background: #1e1b4b;
   border-radius: 28px;
-  border: 3px solid rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow:
-    inset 0 3px 8px rgba(255, 255, 255, 0.35),
-    inset 0 -10px 20px rgba(0, 0, 0, 0.18),
-    0 18px 38px rgba(43, 80, 180, 0.35);
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 20px 40px rgba(30, 27, 75, 0.25),
+    0 4px 12px rgba(30, 27, 75, 0.15);
   color: #ffffff;
   position: relative;
   overflow: hidden;
@@ -1219,9 +1282,10 @@ body {
 }
 .login-developer {
   margin: 18px 0 0;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: rgba(30, 27, 75, 0.28);
 }
 @media (max-height: 720px) {
   .login-logo { width: min(86vw, 420px); }
@@ -1239,13 +1303,19 @@ body {
 @media (hover: hover) and (pointer: fine) {
   .ios-install-close:hover { background: rgba(255, 255, 255, 0.18); }
   .btn-primary:hover:not(:disabled) {
-    filter: brightness(1.06);
+    filter: brightness(1.05);
     transform: translateY(-1px);
     box-shadow:
-      inset 0 2px 3px rgba(255, 255, 255, 0.45),
-      inset 0 -4px 6px rgba(0, 0, 0, 0.18),
-      0 6px 0 #1e40af,
-      0 14px 26px rgba(37, 99, 235, 0.4);
+      inset 0 1px 2px rgba(255, 255, 255, 0.5),
+      0 6px 16px rgba(99, 102, 241, 0.35),
+      0 12px 32px rgba(99, 102, 241, 0.28);
+  }
+  .btn-white-clay:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow:
+      inset 0 1px 2px rgba(255, 255, 255, 0.9),
+      0 6px 16px rgba(255, 255, 255, 0.16),
+      0 12px 32px rgba(99, 102, 241, 0.32);
   }
   .btn-secondary:hover:not(:disabled) {
     background: #f5f9ff;
