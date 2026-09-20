@@ -1440,9 +1440,9 @@ h1, h2, h3 {
 }
 
 .review-chip.active {
-  background: var(--primary);
+  background: #1a1a1d;
   color: white;
-  border-color: var(--primary);
+  border-color: #1a1a1d;
 }
 
 .review-chip-count {
