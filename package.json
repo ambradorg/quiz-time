@@ -23,7 +23,8 @@
     "test:offline-e2e": "tsx --test scripts/offline-e2e.test.mjs",
     "test:e2e": "tsx scripts/auth-e2e.mjs",
     "test:deck-editor": "tsx scripts/deck-editor.test.mjs",
-    "test:move-sheet": "playwright test --config scripts/move-sheet.playwright.config.mjs"
+    "test:move-sheet": "playwright test --config scripts/move-sheet.playwright.config.mjs",
+    "test:mode-switch": "playwright test --config scripts/mode-switch.playwright.config.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

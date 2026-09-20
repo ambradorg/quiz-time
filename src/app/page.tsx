@@ -45,6 +45,7 @@ import { MascotHost, MascotInline } from "@/components/hamster-mascot";
 import { CoursePickerModal } from "@/components/course-picker";
 import NotificationCenter from "@/components/notification-center";
 import { useNotifications } from "@/lib/use-notifications";
+import { useDragScroll } from "@/lib/use-drag-scroll";
 import { mascotEvent, mascotSay } from "@/lib/mascot";
 import {
   OfflineBadge,
@@ -84,6 +85,7 @@ import {
   ChartColumn,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ChevronUp,
   CloudDownload,
@@ -3388,6 +3390,19 @@ function ReviewPage({
 }
 
 // ─── Quiz Page ────────────────────────────────────────────────────────────────
+/**
+ * The mode tabs, in the order they render. The sideways drag needs to know
+ * which tab is active, so the order lives in one place instead of in five
+ * hand-written buttons.
+ */
+const MODE_TABS: { id: Exclude<QuizMode, "select">; label: string; Icon: LucideIcon }[] = [
+  { id: "study", label: "Study", Icon: BookOpen },
+  { id: "exam", label: "Exam", Icon: ClipboardCheck },
+  { id: "identify", label: "Identify", Icon: Type },
+  { id: "enumerate", label: "Enumerate", Icon: ListOrdered },
+  { id: "review", label: "Review", Icon: Brain },
+];
+
 function QuizPage({
   sessionId,
   cards,
@@ -3918,6 +3933,24 @@ function QuizPage({
   // Leaving the deck always ends the peek.
   useEffect(() => () => mascotEvent({ type: "peek", active: false }), []);
 
+  // ── The mode row ────────────────────────────────────────────────────────────
+  // Five tabs don't fit a phone. The row scrolls sideways (drag it, flick it, or
+  // use the arrows) instead of clipping the last tab off the card — see
+  // use-drag-scroll for the drag itself and the globals for the fades.
+  // A mode chosen outside the row — a mode card, "Review missed cards" — still
+  // owns a tab here, so keep the active one in view as it changes.
+  const {
+    setRow: modeSwitchRef,
+    scrollable: modeSwitchScrollable,
+    dragging: modeSwitchDragging,
+    handlers: modeSwitchHandlers,
+    nudge: modeSwitchNudge,
+    atStart: modeSwitchAtStart,
+    atEnd: modeSwitchAtEnd,
+  } = useDragScroll({
+    revealIndex: MODE_TABS.findIndex((tab) => tab.id === mode),
+  });
+
   return (
     <div style={{ padding: "16px" }}>
       {/* Offline: the deck (and every mode) came from this device's cache. */}
@@ -3979,49 +4012,65 @@ function QuizPage({
       {/* Mode switch */}
       {mode !== "select" && (
         <div style={{ marginBottom: 14 }}>
-          <div className="mode-switch">
-            <button
-              className={mode === "study" ? "active" : ""}
-              onClick={() => switchMode("study")}
+          <div className="mode-switch-shell">
+            <div
+              ref={modeSwitchRef}
+              className={`mode-switch${modeSwitchScrollable ? " is-scrollable" : ""}${
+                modeSwitchDragging ? " is-dragging" : ""
+              }`}
+              {...modeSwitchHandlers}
             >
-              <BookOpen />
-              Study
-            </button>
-            <button
-              className={mode === "exam" ? "active" : ""}
-              onClick={() => switchMode("exam")}
-            >
-              <ClipboardCheck />
-              Exam
-            </button>
-            <button
-              className={mode === "identify" ? "active" : ""}
-              onClick={() => switchMode("identify")}
-            >
-              <Type />
-              Identify
-            </button>
-            <button
-              className={mode === "enumerate" ? "active" : ""}
-              onClick={() => switchMode("enumerate")}
-            >
-              <ListOrdered />
-              Enumerate
-            </button>
-            <button
-              className={mode === "review" ? "active" : ""}
-              onClick={() => switchMode("review")}
-              disabled={!sessionId}
-              title={sessionId ? "Spaced repetition review" : "Save this set to use spaced review"}
-            >
-              <Brain />
-              Review
-              {dueCount !== null && dueCount > 0 && (
-                <span className="nav-badge" style={{ position: "static", transform: "none", marginLeft: 4 }}>
-                  {dueCount}
-                </span>
-              )}
-            </button>
+              {MODE_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  className={mode === tab.id ? "active" : ""}
+                  onClick={() => switchMode(tab.id)}
+                  disabled={tab.id === "review" && !sessionId}
+                  title={
+                    tab.id === "review"
+                      ? sessionId
+                        ? "Spaced repetition review"
+                        : "Save this set to use spaced review"
+                      : undefined
+                  }
+                >
+                  <tab.Icon aria-hidden />
+                  {tab.label}
+                  {tab.id === "review" && dueCount !== null && dueCount > 0 && (
+                    <span className="nav-badge" style={{ position: "static", transform: "none", marginLeft: 4 }}>
+                      {dueCount}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Tabs a phone can't show are hidden off this end — fade it and let
+                the row be dragged sideways, or nudged with the arrow. */}
+            {modeSwitchScrollable && !modeSwitchAtStart && (
+              <div className="mode-switch-fade mode-switch-fade--left">
+                <button
+                  type="button"
+                  className="mode-switch-arrow"
+                  onClick={() => modeSwitchNudge(-1)}
+                  aria-label="Scroll the mode tabs to the left"
+                >
+                  <ChevronLeft />
+                </button>
+              </div>
+            )}
+            {modeSwitchScrollable && !modeSwitchAtEnd && (
+              <div className="mode-switch-fade mode-switch-fade--right">
+                <button
+                  type="button"
+                  className="mode-switch-arrow"
+                  onClick={() => modeSwitchNudge(1)}
+                  aria-label="Scroll the mode tabs to the right"
+                >
+                  <ChevronRight />
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Study-mode toggles */}
