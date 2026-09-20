@@ -977,6 +977,7 @@ npm run test:offline    # offline core + browser glue + service-worker contract
 npm run test:offline-e2e # offline round trip against a real server + database
 npm run test:e2e        # auth/stats e2e suite (minted JWTs, real HTTP)
 npm run test:presence-e2e # owner-only roster e2e (needs OWNER_EMAIL, db + server)
+npm run test:mode-switch # quiz mode tab row: sideways drag/scroll (Playwright, mocked APIs)
 ```
 
 ## Notes

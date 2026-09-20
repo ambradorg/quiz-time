@@ -1028,7 +1028,15 @@ h1, h2, h3 {
 
 .mode-icon svg { width: 22px; height: 22px; }
 
-/* Mode switch pill */
+/* Mode switch pill row.
+ *
+ * Five labelled tabs want ~480px and a phone hands them ~360px. Each tab used
+ * to be `flex: 1` (basis 0%, shrink 1), so the row shrank every tab to its
+ * minimum and the leftovers overflowed past the card edge — where `body`'s
+ * `overflow-x: hidden` sliced the last tab ("Review") in half. The row is a
+ * horizontal scroller now: tabs keep their full label and the surplus is
+ * dragged or flicked sideways (see use-drag-scroll).
+ */
 .mode-switch {
   display: flex;
   gap: 4px;
@@ -1036,10 +1044,40 @@ h1, h2, h3 {
   border-radius: var(--radius-full);
   background: var(--gray-100);
   border: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  /* The row must not animate while a drag assigns scrollLeft. */
+  scroll-behavior: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  /* Mouse-drag target: grabbing the row shouldn't highlight the labels. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* No scrollbar chrome on a 40px-tall bar — the fades say "keep going". */
+.mode-switch::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Only offer the grab cursor when there is something to grab: on a wide screen
+ * every tab fits and the row doesn't move. */
+.mode-switch.is-scrollable {
+  cursor: grab;
+}
+
+.mode-switch.is-dragging {
+  cursor: grabbing;
 }
 
 .mode-switch button {
-  flex: 1;
+  /* Grow to share the room when there is room; never shrink below the label. */
+  flex: 1 0 auto;
+  min-width: max-content;
   border: none;
   background: transparent;
   cursor: pointer;
@@ -1049,6 +1087,7 @@ h1, h2, h3 {
   font-size: 12.5px;
   font-weight: 600;
   color: var(--text-muted);
+  white-space: nowrap;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1064,6 +1103,63 @@ h1, h2, h3 {
 }
 
 .mode-switch button svg { width: 14px; height: 14px; }
+
+/* Drag affordances for the row above. The shell is the positioning parent, so
+ * each end can fade out exactly while — and only while — that side still has
+ * tabs hidden off-screen. */
+.mode-switch-shell {
+  position: relative;
+}
+
+.mode-switch-fade {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  width: 46px;
+  display: flex;
+  align-items: center;
+  /* Only the little arrow is clickable; the gradient never eats a drag. */
+  pointer-events: none;
+}
+
+.mode-switch-fade--left {
+  left: 1px;
+  justify-content: flex-start;
+  border-radius: var(--radius-full) 0 0 var(--radius-full);
+  background: linear-gradient(to right, var(--surface) 34%, rgba(255, 255, 255, 0));
+}
+
+.mode-switch-fade--right {
+  right: 1px;
+  justify-content: flex-end;
+  border-radius: 0 var(--radius-full) var(--radius-full) 0;
+  background: linear-gradient(to left, var(--surface) 34%, rgba(255, 255, 255, 0));
+}
+
+.mode-switch-arrow {
+  pointer-events: auto;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  margin: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.mode-switch-arrow svg { width: 13px; height: 13px; }
+
+.mode-switch-arrow:hover {
+  color: var(--text-primary);
+  transform: translateY(-1px);
+}
 
 /* Upload segmented control */
 .clay-segment {
