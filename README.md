@@ -112,6 +112,30 @@ node scripts/dev-pglite-server.mjs 5433 &
 DATABASE_URL=postgresql://postgres@127.0.0.1:5433/quiztime npm run db:migrate
 ```
 
+## Nibbles, the mascot
+
+Nibbles 🐹 is the app's study buddy. He has two homes, both fed by a single
+engine (`<MascotProvider/>`, mounted once in the app shell in
+`src/app/page.tsx`) so the two views can never disagree — and so a bubble
+survives a tab switch:
+
+- **Home** — he stands *inside* the dark hero card at mascot size
+  (`<MascotHeroAvatar/>`, 124×163) and is always visible: idle bob when quiet,
+  and his speech bubble (`<MascotHeroSub/>`) types out under the copy with a
+  tail pointing up at him.
+- **Every other tab** — the big corner buddy (`<MascotFloatingView/>`, 108×140)
+  pops up just above the bottom nav whenever he has something to say, tucking
+  half behind the screen edge while you answer.
+
+Poking him anywhere hands out a random study tip (or wakes him if he dozed
+off). All of his lines live in the `SCRIPT` section of
+`src/components/hamster-mascot.tsx`; the pose artwork is plain PNGs in
+`public/hamster/`, so the character can be redesigned by swapping files. The
+typewriter, greeting, habit check (sleepy / lost-streak) and celebration logic
+all live in `useMascotEngine` — a new view only needs to render `MascotView`.
+
+`/hamster-preview` is a playground that plays every moment without signing in.
+
 ## Requirements
 
 - Node.js 20+

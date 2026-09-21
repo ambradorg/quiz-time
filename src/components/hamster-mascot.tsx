@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { X } from "lucide-react";
 import {
   MASCOT_IMAGES,
@@ -16,6 +24,13 @@ import {
    wording there to give him your own personality. The poses are plain
    PNGs in public/hamster/ (idle / waving / pointing / celebrating /
    sleeping / sad); swap those files to redesign the character.
+
+   He lives in two places, both fed by one engine (<MascotProvider/> in the
+   app shell), so the two views can never disagree:
+   • Home    → <MascotHeroAvatar/> stands large inside the hero card and
+                <MascotHeroSub/> shows his speech bubble under the title.
+   • Other tabs → <MascotFloatingView/> is the big corner buddy above the
+                bottom nav, sliding in when he has something to say.
 
    What he notices:
    • login            → "Hello, <name>!" tour for new users, or "Welcome
@@ -373,7 +388,45 @@ const CHAIN_DELAY_MS = 900;
 const CHARS_PER_TICK = 2;
 const TICK_MS = 32;
 
-export function MascotHost({
+/**
+ * Everything a Nibbles view needs to render. He has TWO homes, both fed by
+ * this one engine (see <MascotProvider/>):
+ *
+ *   • the Home hero — <MascotHeroAvatar/> + <MascotHeroSub/>, where he lives
+ *     large and permanently beside the greeting, and
+ *   • the corner buddy — <MascotFloatingView/>, which pops up (big) on every
+ *     other tab whenever he has something to say.
+ */
+export interface MascotView {
+  bubble: BubbleState | null;
+  active: Step | null;
+  fullText: string;
+  shown: number;
+  typingDone: boolean;
+  isLastTutorialStep: boolean;
+  mood: MascotMood;
+  celebrating: boolean;
+  anim: CelebrateAnim;
+  dozing: boolean;
+  thinking: boolean;
+  peeking: boolean;
+  /** Corner buddy only: show up when he has something to say (or a special mood). */
+  shouldShow: boolean;
+  /** Poke him: dismiss the bubble, wake him up, or get a random tip. */
+  poke: () => void;
+  /** Close the bubble — a tour bubble ends the tour. */
+  dismiss: () => void;
+  nextTutorialStep: () => void;
+  /** Tap the bubble to finish typing instantly. */
+  showFullText: () => void;
+}
+
+/**
+ * One engine per page, or Nibbles talks over himself. It owns the greeting,
+ * the habit check, the event listener, the typewriter and the auto-dismiss
+ * timers; consumers only draw him.
+ */
+function useMascotEngine({
   userName,
   userId,
   demoHabit,
@@ -382,7 +435,7 @@ export function MascotHost({
   userId?: string | null;
   /** Playground only (/hamster-preview): force a habit moment, skip /api/stats. */
   demoHabit?: "sleepy" | "sad" | null;
-}) {
+}): MascotView {
   const [bubble, setBubble] = useState<BubbleState | null>(null);
   const [shown, setShown] = useState(0);
   /** Ambient pose between bubbles — sleepy when away, thinking while generating. */
@@ -604,8 +657,14 @@ export function MascotHost({
     closeBubble();
   }, [userId, closeBubble]);
 
+  /** Close whatever is on screen (the close button, tapping the bubble's X). */
+  const dismiss = useCallback(() => {
+    if (bubble?.kind === "tutorial") finishTutorial();
+    else closeBubble();
+  }, [bubble?.kind, finishTutorial, closeBubble]);
+
   /** Poke Nibbles: dismiss the bubble, wake him up, or get a random tip. */
-  const poke = () => {
+  const poke = useCallback(() => {
     if (bubble) {
       if (bubble.kind === "tutorial") finishTutorial();
       else closeBubble();
@@ -618,13 +677,17 @@ export function MascotHost({
     }
     if (ambient === "thinking") setAmbientNow("idle");
     showSingle(TAP_TIPS[Math.floor(Math.random() * TAP_TIPS.length)]);
-  };
+  }, [bubble, ambient, finishTutorial, closeBubble, setAmbientNow, showSingle]);
 
-  const nextTutorialStep = () => {
+  const nextTutorialStep = useCallback(() => {
     if (!bubble) return;
     if (bubble.index >= bubble.steps.length - 1) return finishTutorial();
     setBubble({ ...bubble, index: bubble.index + 1 });
-  };
+  }, [bubble, finishTutorial]);
+
+  const showFullText = useCallback(() => {
+    if (!typingDone) setShown(fullText.length);
+  }, [typingDone, fullText.length]);
 
   const mood: MascotMood = bubble && active ? active.mood : peeking ? "peek" : ambient;
   const celebrating = Boolean(
@@ -634,16 +697,57 @@ export function MascotHost({
   const dozing = !bubble && ambient === "sleepy";
   const thinking = !bubble && ambient === "thinking";
   const isLastTutorialStep = bubble?.kind === "tutorial" && bubble.index >= bubble.steps.length - 1;
-  // Defined role: only show floating when it has something to say, is peeking during a run, or is in a special ambient state (sleepy/thinking).
-  // Idle floating with no message is now hidden — Nibbles appears purposefully for onboarding, streaks, celebrations, and hints.
+  // Defined role: the corner buddy only shows when it has something to say,
+  // is peeking during a run, or is in a special ambient state (sleepy /
+  // thinking). On Home the hero avatar carries him instead.
   const shouldShow = Boolean(bubble || peeking || ambient !== "idle");
 
+  return {
+    bubble,
+    active,
+    fullText,
+    shown,
+    typingDone,
+    isLastTutorialStep,
+    mood,
+    celebrating,
+    anim,
+    dozing,
+    thinking,
+    peeking,
+    shouldShow,
+    poke,
+    dismiss,
+    nextTutorialStep,
+    showFullText,
+  };
+}
+
+const MascotContext = createContext<MascotView | null>(null);
+
+/**
+ * Mounted once in the app shell. Everything Nibbles does — greeting, habit
+ * check, event bus, typewriter — runs here, so the hero avatar, the hero
+ * bubble and the corner buddy always agree and a bubble survives a tab switch.
+ *
+ * The children are passed through as a prop, so the 30×/s typewriter ticks
+ * re-render the two mascot views only, never the whole app.
+ */
+export function MascotProvider({
+  userName,
+  userId,
+  demoHabit,
+  children,
+}: {
+  userName?: string | null;
+  userId?: string | null;
+  /** Playground only (/hamster-preview): force a habit moment, skip /api/stats. */
+  demoHabit?: "sleepy" | "sad" | null;
+  children: ReactNode;
+}) {
+  const view = useMascotEngine({ userName, userId, demoHabit });
   return (
-    <div
-      className={`mascot-wrap${peeking && !bubble ? " mascot-peeking" : ""}${
-        !shouldShow ? " mascot-hidden" : ""
-      }`}
-    >
+    <MascotContext.Provider value={view}>
       {/* Preload every pose so a mood swap never flickers. */}
       <div style={{ display: "none" }} aria-hidden>
         {Object.values(MASCOT_IMAGES).map((src) => (
@@ -651,23 +755,124 @@ export function MascotHost({
           <img key={src} src={src} alt="" />
         ))}
       </div>
+      {children}
+    </MascotContext.Provider>
+  );
+}
 
-      {/* ⭐ burst for 90%+ finishes */}
-      {bubble && active?.burst && (
-        <div className="mascot-burst" aria-hidden>
-          {["⭐", "✨", "🎉", "⭐", "✨", "🎊", "⭐"].map((piece, i) => (
-            <span
-              key={i}
-              style={{
-                left: `${-20 + ((i * 37) % 150)}px`,
-                animationDelay: `${(i * 0.23) % 1.4}s`,
-                fontSize: `${12 + ((i * 5) % 10)}px`,
-              }}
-            >
-              {piece}
-            </span>
-          ))}
+/** Draws happily without a provider (Nibbles just stays quiet). */
+function useMascot(): MascotView | null {
+  return useContext(MascotContext);
+}
+
+/** Sleeping Zzz's that drift up from his face. */
+function MascotZzz() {
+  return (
+    <span className="mascot-zzz" aria-hidden>
+      <span>z</span>
+      <span>z</span>
+      <span>Z</span>
+    </span>
+  );
+}
+
+/** The 💭 that floats while the AI turns notes into flashcards. */
+function MascotThought() {
+  return (
+    <span className="mascot-thought" aria-hidden>
+      <span>💭</span>
+    </span>
+  );
+}
+
+/** ⭐ burst for 90%+ finishes — sizes/spread differ per view. */
+function MascotBurst({
+  base = -20,
+  step = 37,
+  wrap = 150,
+  bottom = 60,
+  font = 12,
+}: {
+  base?: number;
+  step?: number;
+  wrap?: number;
+  bottom?: number;
+  font?: number;
+}) {
+  return (
+    <div className="mascot-burst" aria-hidden>
+      {["⭐", "✨", "🎉", "⭐", "✨", "🎊", "⭐"].map((piece, i) => (
+        <span
+          key={i}
+          style={{
+            left: `${base + ((i * step) % wrap)}px`,
+            bottom: `${bottom}px`,
+            animationDelay: `${(i * 0.23) % 1.4}s`,
+            fontSize: `${font + ((i * 5) % 10)}px`,
+          }}
+        >
+          {piece}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** What goes inside a speech bubble — shared by the hero and corner views. */
+function MascotBubbleBody({ view }: { view: MascotView }) {
+  const { bubble, fullText, shown, typingDone, isLastTutorialStep } = view;
+  if (!bubble) return null;
+  return (
+    <>
+      <button
+        className="mascot-close"
+        onClick={(e) => {
+          e.stopPropagation();
+          view.dismiss();
+        }}
+        aria-label="Dismiss Nibbles"
+      >
+        <X size={12} />
+      </button>
+
+      <p className="mascot-text">
+        {fullText.slice(0, shown)}
+        {!typingDone && <span className="mascot-caret" aria-hidden />}
+      </p>
+
+      {bubble.kind === "tutorial" && typingDone && (
+        <div className="mascot-actions">
+          {!isLastTutorialStep && (
+            <button className="btn btn-ghost btn-sm mascot-skip" onClick={view.dismiss}>
+              Skip tour
+            </button>
+          )}
+          <button className="btn btn-primary btn-sm" onClick={view.nextTutorialStep}>
+            {isLastTutorialStep ? "Let's go! 🎉" : "Next →"}
+          </button>
         </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * Nibbles as he appears on every other tab: a big corner buddy above the
+ * bottom nav that slides in when he has something to say.
+ */
+export function MascotFloatingView() {
+  const view = useMascot();
+  if (!view) return null;
+  const { bubble, active, mood, celebrating, anim, dozing, thinking, peeking, shouldShow } = view;
+
+  return (
+    <div
+      className={`mascot-wrap${peeking && !bubble ? " mascot-peeking" : ""}${
+        shouldShow ? "" : " mascot-hidden"
+      }`}
+    >
+      {bubble && active?.burst && (
+        <MascotBurst base={-28} step={52} wrap={210} bottom={118} font={16} />
       )}
 
       {bubble && active && (
@@ -676,40 +881,9 @@ export function MascotHost({
           className="mascot-bubble"
           role="status"
           aria-live="polite"
-          onClick={() => {
-            // Tap to finish typing instantly.
-            if (!typingDone) setShown(fullText.length);
-          }}
+          onClick={view.showFullText}
         >
-          <button
-            className="mascot-close"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (bubble.kind === "tutorial") finishTutorial();
-              else closeBubble();
-            }}
-            aria-label="Dismiss Nibbles"
-          >
-            <X size={12} />
-          </button>
-
-          <p className="mascot-text">
-            {fullText.slice(0, shown)}
-            {!typingDone && <span className="mascot-caret" aria-hidden />}
-          </p>
-
-          {bubble.kind === "tutorial" && typingDone && (
-            <div className="mascot-actions">
-              {!isLastTutorialStep && (
-                <button className="btn btn-ghost btn-sm mascot-skip" onClick={finishTutorial}>
-                  Skip tour
-                </button>
-              )}
-              <button className="btn btn-primary btn-sm" onClick={nextTutorialStep}>
-                {isLastTutorialStep ? "Let's go! 🎉" : "Next →"}
-              </button>
-            </div>
-          )}
+          <MascotBubbleBody view={view} />
         </div>
       )}
 
@@ -723,26 +897,99 @@ export function MascotHost({
         ]
           .filter(Boolean)
           .join(" ")}
-        onClick={poke}
+        onClick={view.poke}
         aria-label="Nibbles the hamster, your study buddy"
         title="Nibbles"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={MASCOT_IMAGES[mood]} alt="" draggable={false} />
-        {dozing && (
-          <span className="mascot-zzz" aria-hidden>
-            <span>z</span>
-            <span>z</span>
-            <span>Z</span>
-          </span>
-        )}
-        {thinking && (
-          <span className="mascot-thought" aria-hidden>
-            <span>💭</span>
-          </span>
-        )}
+        {dozing && <MascotZzz />}
+        {thinking && <MascotThought />}
       </button>
     </div>
+  );
+}
+
+/**
+ * The big Nibbles living in the Home hero card — always visible (idle bob),
+ * mirrors every mood the corner buddy would show, and poking him still gets
+ * you a study tip.
+ */
+export function MascotHeroAvatar() {
+  const view = useMascot();
+  if (!view) return null;
+  const { bubble, active, mood, celebrating, anim, dozing, thinking } = view;
+
+  return (
+    <button
+      type="button"
+      className={[
+        "mascot-hero-avatar",
+        !bubble ? "mascot-hero-resting" : "",
+        celebrating ? `mascot-anim-${anim}` : "",
+        dozing ? "mascot-sleepy" : "",
+        thinking ? "mascot-thinking" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      onClick={view.poke}
+      aria-label="Nibbles the hamster, your study buddy — tap for a study tip"
+      title="Poke Nibbles"
+    >
+      <span className="mascot-hero-glow" aria-hidden />
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={MASCOT_IMAGES[mood]} alt="" draggable={false} />
+      {bubble && active?.burst && (
+        <MascotBurst base={-34} step={58} wrap={220} bottom={104} font={18} />
+      )}
+      {dozing && <MascotZzz />}
+      {thinking && <MascotThought />}
+    </button>
+  );
+}
+
+/**
+ * The line under the hero title: Nibbles' speech bubble while he is talking,
+ * the ordinary tagline when he is quiet. It is its own component so the
+ * typewriter ticks re-render this little bubble — never the whole Home page.
+ */
+export function MascotHeroSub({ idleText }: { idleText: string }) {
+  const view = useMascot();
+  if (!view || !view.bubble || !view.active) {
+    return idleText ? <p className="hero-sub">{idleText}</p> : null;
+  }
+  return (
+    <div
+      key={view.bubble.key}
+      className="mascot-bubble mascot-bubble-hero"
+      role="status"
+      aria-live="polite"
+      onClick={view.showFullText}
+    >
+      <MascotBubbleBody view={view} />
+    </div>
+  );
+}
+
+/**
+ * Back-compat wrapper — a provider plus the floating buddy in one component,
+ * used by the /hamster-preview playground (the real app mounts the provider in
+ * the shell and picks a view per tab).
+ */
+export function MascotHost({
+  userName,
+  userId,
+  demoHabit,
+}: {
+  userName?: string | null;
+  userId?: string | null;
+  /** Playground only (/hamster-preview): force a habit moment, skip /api/stats. */
+  demoHabit?: "sleepy" | "sad" | null;
+}) {
+  return (
+    <MascotProvider userName={userName} userId={userId} demoHabit={demoHabit}>
+      <MascotFloatingView />
+    </MascotProvider>
   );
 }
 

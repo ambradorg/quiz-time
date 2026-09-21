@@ -1558,10 +1558,12 @@ h1, h2, h3 {
 .review-chip.active .review-chip-count { background: rgba(255,255,255,0.24); }
 
 /* ── Mascot — defined role, not loose float ───────────────────────────────── */
+/* The corner buddy — a full mascot now, not a tiny avatar chip: he stands
+   free of any circle, with a soft floor shadow, just above the bottom nav. */
 .mascot-wrap {
   position: fixed;
-  right: 14px;
-  bottom: 88px;
+  right: 6px;
+  bottom: 76px;
   z-index: 90;
   display: flex;
   flex-direction: column;
@@ -1572,50 +1574,50 @@ h1, h2, h3 {
 
 .mascot-wrap.mascot-hidden {
   opacity: 0;
-  transform: translateY(12px) scale(0.88);
+  transform: translateY(16px) scale(0.86);
   pointer-events: none;
 }
 
-.mascot-wrap.mascot-peeking { transform: translateX(32px); }
-.mascot-wrap.mascot-peeking .mascot-avatar { transform: rotate(3deg) scale(0.92); }
+.mascot-wrap.mascot-peeking { transform: translateX(60px); }
+.mascot-wrap.mascot-peeking .mascot-avatar { transform: rotate(3deg) scale(0.94); }
 
 .mascot-avatar {
   pointer-events: auto;
-  width: 52px;
-  height: 52px;
-  padding: 2px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: white;
+  width: 108px;
+  height: 140px;
+  padding: 0;
+  border: none;
+  background: none;
   cursor: pointer;
-  box-shadow: var(--shadow-md);
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
-  overflow: hidden;
-  transition: transform 0.16s ease, box-shadow 0.16s ease;
+  position: relative;
+  transition: transform 0.16s ease;
+  filter: drop-shadow(0 10px 16px rgba(23, 23, 23, 0.22));
 }
 
-.mascot-avatar:hover { transform: scale(1.06); box-shadow: var(--shadow-lg); }
-.mascot-avatar:active { transform: scale(0.94); }
+.mascot-avatar:hover { transform: scale(1.05) translateY(-2px); }
+.mascot-avatar:active { transform: scale(0.96); }
 
 .mascot-avatar img {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  object-position: bottom center;
   display: block;
   user-select: none;
 }
 
-.mascot-avatar.mascot-anim-bounce img { animation: mascot-bounce 0.55s ease-in-out infinite; }
-.mascot-avatar.mascot-anim-spin img { animation: mascot-spin 0.85s ease-in-out infinite; }
-.mascot-avatar.mascot-anim-dance img { animation: mascot-dance 0.5s ease-in-out infinite; }
-.mascot-avatar.mascot-anim-flip img { animation: mascot-flip 1.05s ease-in-out infinite; }
+.mascot-anim-bounce img { animation: mascot-bounce 0.55s ease-in-out infinite; }
+.mascot-anim-spin img { animation: mascot-spin 0.85s ease-in-out infinite; }
+.mascot-anim-dance img { animation: mascot-dance 0.5s ease-in-out infinite; }
+.mascot-anim-flip img { animation: mascot-flip 1.05s ease-in-out infinite; }
 
 .mascot-bubble {
   pointer-events: auto;
   position: relative;
-  width: min(300px, calc(100vw - 88px));
+  width: min(310px, calc(100vw - 124px));
   margin: 0 4px 10px 0;
   background: white;
   border: 1px solid var(--border);
@@ -1633,7 +1635,7 @@ h1, h2, h3 {
   content: "";
   position: absolute;
   bottom: -7px;
-  right: 22px;
+  right: 34px;
   width: 14px;
   height: 14px;
   background: white;
@@ -1696,13 +1698,156 @@ h1, h2, h3 {
   max-width: 300px;
 }
 
+/* ── Nibbles on the Home hero ──────────────────────────────────────────────
+   The Home tab has no corner buddy: he stands right inside the dark hero
+   card, mascot-sized, with his speech bubble beside his head. */
+.home-hero {
+  position: relative;
+  background: #1a1a1d;
+  border-radius: 20px;
+  padding: 20px 20px 22px;
+  color: white;
+  box-shadow: 0 10px 26px -14px rgba(26,26,29,0.55);
+  overflow: hidden;
+}
+
+/* Warm spotlight behind him so he pops off the dark card */
+.home-hero::before {
+  content: "";
+  position: absolute;
+  top: -34%;
+  right: -22%;
+  width: 82%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,168,64,0.24), rgba(255,168,64,0) 68%);
+  pointer-events: none;
+}
+
+.home-hero-top {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.home-hero-copy { flex: 1; min-width: 0; }
+
+.home-hero-kicker {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #b9b9c2;
+  margin-bottom: 8px;
+}
+
+.home-hero-title {
+  color: white;
+  font-size: 28px;
+  margin: 0 0 6px;
+  line-height: 1.05;
+}
+
+.home-hero .hero-sub {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+  font-weight: 500;
+  color: #c8c8cf;
+}
+
+.home-hero-cta { position: relative; display: flex; gap: 10px; margin-top: 18px; }
+.home-hero-primary { flex: 1.12; background: white; color: #1b1b1f; font-weight: 800; }
+.home-hero-secondary { flex: 1; background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.25); color: white; font-weight: 600; }
+
+/* Nibbles himself: mascot-sized (124×163), standing at the hero's right */
+.mascot-hero-avatar {
+  position: relative;
+  flex-shrink: 0;
+  width: 124px;
+  height: 163px;
+  margin-right: -4px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.mascot-hero-avatar img {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: bottom center;
+  display: block;
+  user-select: none;
+  filter: drop-shadow(0 12px 20px rgba(0,0,0,0.45));
+  transition: transform 0.18s ease;
+}
+
+/* Gentle bob while he has nothing to say — he is alive, not a logo */
+.mascot-hero-avatar.mascot-hero-resting img { animation: mascot-bob 3.6s ease-in-out infinite; }
+.mascot-hero-avatar:hover img { transform: scale(1.04); }
+.mascot-hero-avatar:active img { transform: scale(0.97); }
+
+.mascot-hero-glow {
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  width: 88%;
+  height: 22px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(0,0,0,0.5), rgba(0,0,0,0) 72%);
+  pointer-events: none;
+}
+
+/* His line on Home: full-width bubble under the mascot, tail pointing up
+   at his face — so long lines stay short and readable. */
+.mascot-bubble-hero {
+  position: relative;
+  width: 100%;
+  margin: 12px 0 0;
+  font-size: 12.5px;
+  padding: 10px 12px;
+  animation: mascot-hero-bubble-in 0.3s cubic-bezier(0.34,1.4,0.64,1) both;
+}
+
+.mascot-bubble-hero::after {
+  content: "";
+  position: absolute;
+  top: -7px;
+  right: 30px;
+  width: 13px;
+  height: 13px;
+  background: white;
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  border-top-left-radius: 3px;
+  transform: rotate(45deg);
+}
+
+.mascot-bubble-hero + .home-hero-cta { margin-top: 14px; }
+
+.mascot-hero-avatar .mascot-zzz span, .mascot-hero-avatar .mascot-thought span { color: #d4d4d8; }
+
 .mascot-thought, .mascot-zzz, .mascot-burst { position: absolute; inset: 0; pointer-events: none; }
-.mascot-thought span { position: absolute; top: -8px; right: 2px; font-size: 18px; opacity: 0; animation: mascot-zzz-float 3s ease-out infinite; }
+.mascot-thought span { position: absolute; top: -16px; right: 10px; font-size: 32px; opacity: 0; animation: mascot-zzz-float 3s ease-out infinite; }
 .mascot-zzz span { position: absolute; font-weight: 800; color: var(--gray-400); opacity: 0; animation: mascot-zzz-float 2.7s ease-out infinite; }
-.mascot-zzz span:nth-child(1) { font-size: 11px; top: 14px; right: 0px; animation-delay: 0s; }
-.mascot-zzz span:nth-child(2) { font-size: 14px; top: 2px; right: 10px; animation-delay: 0.5s; }
-.mascot-zzz span:nth-child(3) { font-size: 18px; top: -12px; right: 22px; animation-delay: 1s; }
-.mascot-burst span { position: absolute; bottom: 56px; opacity: 0; animation: mascot-burst-fly 1.7s ease-out infinite; }
+.mascot-zzz span:nth-child(1) { font-size: 16px; top: 34px; right: 6px; animation-delay: 0s; }
+.mascot-zzz span:nth-child(2) { font-size: 22px; top: 16px; right: 20px; animation-delay: 0.5s; }
+.mascot-zzz span:nth-child(3) { font-size: 30px; top: -6px; right: 40px; animation-delay: 1s; }
+/* The ⭐ burst flies up in FRONT of the bubble, not behind it */
+.mascot-wrap .mascot-burst { z-index: 2; }
+.mascot-burst span { position: absolute; opacity: 0; animation: mascot-burst-fly 1.7s ease-out infinite; }
 
 /* ── Presence ───────────────────────────────────────────────────────────────── */
 .presence-bar {
@@ -2050,9 +2195,13 @@ h1, h2, h3 {
 /* ── Mascot keyframes ──────────────────────────────────────────────────────── */
 @keyframes mascot-bob { 0%,100% { transform: translateY(0) rotate(-1deg); } 50% { transform: translateY(-4px) rotate(1deg); } }
 @keyframes mascot-bounce { 0%,100% { transform: translateY(0) scale(1); } 30% { transform: translateY(-8px) scale(1.03); } 60% { transform: translateY(0) scale(0.97); } 80% { transform: translateY(-3px) scale(1.01); } }
+@keyframes mascot-hero-bubble-in { 0% { opacity: 0; transform: translateX(-10px) scale(0.95); } 100% { opacity: 1; transform: translateX(0) scale(1); } }
 @keyframes mascot-pop-in { 0% { transform: scale(0.8); opacity: 0; } 70% { transform: scale(1.04); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
 @keyframes mascot-caret-blink { 0%,60% { opacity: 1; } 61%,100% { opacity: 0; } }
-@keyframes mascot-spin { 0% { transform: rotate(0deg) scale(1); } 50% { transform: rotate(180deg) scale(1.06); } 100% { transform: rotate(360deg) scale(1); } }
+/* Exam-mode celebration: a joyful backflip — he leaves the ground, so the
+   rotation reads as a leap instead of a slow tumble (matters now he is
+   mascot-sized). */
+@keyframes mascot-spin { 0% { transform: translateY(0) rotate(0deg) scale(1); } 18% { transform: translateY(-16px) rotate(80deg) scale(1.03); } 55% { transform: translateY(-22px) rotate(250deg) scale(1.05); } 82% { transform: translateY(0) rotate(360deg) scale(1); } 100% { transform: translateY(0) rotate(360deg) scale(1); } }
 @keyframes mascot-dance { 0%,100% { transform: rotate(-6deg) translateY(0); } 50% { transform: rotate(6deg) translateY(-4px); } }
 @keyframes mascot-flip { 0% { transform: scaleX(1); } 50% { transform: scaleX(-1) translateY(-2px); } 100% { transform: scaleX(1); } }
 @keyframes mascot-zzz-float { 0% { opacity: 0; transform: translateY(6px) scale(0.7); } 25% { opacity: 1; } 100% { opacity: 0; transform: translateY(-14px) scale(1.05); } }

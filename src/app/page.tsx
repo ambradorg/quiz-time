@@ -41,7 +41,13 @@ import {
 } from "@/lib/offline";
 import { useOfflineIdentity, useOnlineStatus, useOutbox } from "@/lib/use-offline";
 import { usePresenceHeartbeat } from "@/lib/use-presence";
-import { MascotHost, MascotInline } from "@/components/hamster-mascot";
+import {
+  MascotFloatingView,
+  MascotHeroAvatar,
+  MascotHeroSub,
+  MascotInline,
+  MascotProvider,
+} from "@/components/hamster-mascot";
 import { CoursePickerModal } from "@/components/course-picker";
 import NotificationCenter from "@/components/notification-center";
 import { useNotifications } from "@/lib/use-notifications";
@@ -6689,24 +6695,30 @@ function HomePage({
   const offlineReady = offlineDeckCount > 0;
   return (
     <div className="section-stack" style={{ padding: "20px 16px 24px" }}>
-      {/* Hero — dark card, from the mockup */}
-      <div style={{ background: "#1a1a1d", borderRadius: 20, padding: 22, color: "white", boxShadow: "0 10px 26px -14px rgba(26,26,29,0.55)" }}>
-        <div className="meta-label" style={{ color: "#b9b9c2", marginBottom: 10, display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}>
-          <Sparkles size={13} aria-hidden />
-          ai study partner
+      {/* Hero — dark card with Nibbles standing in it (mascot-sized, always
+          visible on Home: he waves hello, cheers finishes, dozes off when you
+          go quiet, and poking him hands out a study tip). */}
+      <div className="home-hero">
+        <div className="home-hero-top">
+          <div className="home-hero-copy">
+            <div className="home-hero-kicker">
+              <Sparkles size={13} aria-hidden />
+              ai study partner
+            </div>
+            <h1 className="page-title home-hero-title">QuizTime</h1>
+            <p className="hero-sub">Turn your notes into flashcards that stick.</p>
+          </div>
+          <MascotHeroAvatar />
         </div>
-        <h1 className="page-title" style={{ color: "white", marginBottom: 6, fontSize: 28 }}>
-          QuizTime
-        </h1>
-        <p style={{ margin: "0 0 18px", fontSize: 14.5, color: "#c8c8cf", lineHeight: 1.55, fontWeight: 500 }}>
-          Turn your notes into flashcards that stick.
-        </p>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button className="btn btn-primary" style={{ flex: 1.12, background: "white", color: "#1b1b1f", fontWeight: 800 }} onClick={onUpload}>
+        {/* Nibbles' line while he has something to say; nothing at all when he
+            is quiet (the tagline above already covers the friendly small talk) */}
+        <MascotHeroSub idleText="" />
+        <div className="home-hero-cta">
+          <button className="btn btn-primary home-hero-primary" onClick={onUpload}>
             <Sparkles size={16} strokeWidth={2.5} aria-hidden />
             Start studying
           </button>
-          <button className="btn btn-secondary" style={{ flex: 1, background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.25)", color: "white", fontWeight: 600 }} onClick={onSessions}>
+          <button className="btn btn-secondary home-hero-secondary" onClick={onSessions}>
             <Layers size={16} aria-hidden />
             My sets
           </button>
@@ -8065,15 +8077,25 @@ export default function App() {
         />
       )}
 
-      {/* Page content with rhythm */}
-      <div className="page-content section-stack">
-        {renderContent()}
-        <footer className="app-footer">
-          <p className="app-footer-low">
-            Developed by <strong>FBC BSIT 3-A</strong> · QuizTime · {new Date().getFullYear()}
-          </p>
-        </footer>
-      </div>
+      {/* Page content with rhythm — wrapped in the mascot provider so every
+          tab can draw Nibbles (the Home hero does exactly that). */}
+      <MascotProvider
+        userName={user?.name ?? null}
+        userId={user?.id != null ? String(user.id) : null}
+      >
+        <div className="page-content section-stack">
+          {renderContent()}
+          <footer className="app-footer">
+            <p className="app-footer-low">
+              Developed by <strong>FBC BSIT 3-A</strong> · QuizTime · {new Date().getFullYear()}
+            </p>
+          </footer>
+        </div>
+
+        {/* Nibbles — on Home he stands inside the hero card (see HomePage); on
+            every other tab this is the big corner buddy that pops up to speak. */}
+        {tab !== "home" && <MascotFloatingView />}
+      </MascotProvider>
 
       {/* Bottom nav */}
       <nav className="nav-bottom">
@@ -8118,8 +8140,6 @@ export default function App() {
       />
 
       <ToastHost />
-      {/* Nibbles — defined role: only shows in specific moments via MascotHost logic */}
-      <MascotHost userName={user?.name ?? null} userId={user?.id != null ? String(user.id) : null} />
     </div>
   );
 }
