@@ -5468,14 +5468,16 @@ function SessionsPage({
     }
   };
 
-  // ── Search: filter subjects by name and sets by title (case-insensitive).
+  // ── Search: filter subjects by name and unfiled sets by title
+  // (case-insensitive). Sets assigned to a subject live in that folder only.
   const q = query.trim().toLowerCase();
   const filteredSubjects = q
     ? subjects.filter((s) => s.name.toLowerCase().includes(q))
     : subjects;
+  const unfiledSessions = sessions.filter((s) => (s.subjectId ?? null) === null);
   const filteredSessions = q
-    ? sessions.filter((s) => s.title.toLowerCase().includes(q))
-    : sessions;
+    ? unfiledSessions.filter((s) => s.title.toLowerCase().includes(q))
+    : unfiledSessions;
 
   /** "Move to subject" sheet opener — passed down to every deck row. */
   const openMoveSheet = (session: StudySession) => {
@@ -5699,7 +5701,7 @@ function SessionsPage({
             </section>
           )}
 
-          {/* ── All Sets: every study set, filed or not ─────────────────── */}
+          {/* ── All Sets: sets that have not been filed into a subject ─── */}
           <section>
             <h3 style={{ fontSize: 15, fontWeight: 800, margin: "0 0 10px", display: "flex", alignItems: "center", gap: 7, color: "var(--text)" }}>
               <Layers size={16} aria-hidden style={{ color: "#1d4ed8" }} />
@@ -5736,7 +5738,7 @@ function SessionsPage({
               </p>
             ) : (
               <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>
-                No sets here yet — tap <strong>Set</strong> to build one manually, or create a subject above.
+                No unfiled sets — your sets are organised into the subject folders above.
               </p>
             )}
           </section>
@@ -5749,7 +5751,24 @@ function SessionsPage({
           session={moveSheet}
           online={online}
           onClose={() => setMoveSheet(null)}
-          onMoved={() => {
+          onMoved={(subjectId) => {
+            const previousSubjectId = moveSheet.subjectId ?? null;
+            setSessions((prev) => prev.map((session) =>
+              session.id === moveSheet.id ? { ...session, subjectId } : session
+            ));
+            setSubjects((prev) => {
+              const next = prev.map((subject) => {
+                if (subject.id === previousSubjectId) {
+                  return { ...subject, setCount: Math.max(0, subject.setCount - 1) };
+                }
+                if (subject.id === subjectId) {
+                  return { ...subject, setCount: subject.setCount + 1 };
+                }
+                return subject;
+              });
+              cacheSubjectsLocally(next);
+              return next;
+            });
             setMoveSheet(null);
             onOfflineChanged();
           }}

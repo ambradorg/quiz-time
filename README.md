@@ -87,9 +87,10 @@ three parts:
   button and an **Add set manually** row that create decks *already filed in
   the folder*. The subject page's pencil renames the folder; the trash deletes
   the **folder only** — its sets drop back to All Sets, never deleted.
-- **All Sets** – every deck, filed or not. Each row has a small folder button
-  opening the **Move to Subject** sheet: pick a folder, create one on the
-  spot, or "Unfile" to bring the set back out.
+- **All Sets** – decks that have not been filed into a subject. Each row has a
+  small folder button opening the **Move to Subject** sheet: pick a folder or
+  create one on the spot, and the deck moves out of All Sets into that folder.
+  Use "Unfile" inside a subject to bring the set back out.
 
 Rules the API enforces (`/api/subjects`, `subjectId` on `/api/sessions`):
 
