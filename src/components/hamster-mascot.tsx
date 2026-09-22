@@ -751,19 +751,13 @@ export function MascotHost({
  * placement/sizing, not floating. Use this where the old floating hamster
  * used to feel loose.
  */
-export function MascotInline({
-  mood = "idle",
-  text,
-  size = 72,
-}: {
-  mood?: MascotMood;
-  text?: string;
-  size?: number;
-}) {
+export function MascotInline({ mood = "idle", text }: { mood?: MascotMood; text?: string }) {
+  // Sizing is CSS-driven (PC vs phone media queries on .mascot-inline-img in
+  // globals.css), so it can respond to breakpoints the way the floating host does.
   return (
     <div className="mascot-inline">
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={MASCOT_IMAGES[mood]} alt="" className="mascot-inline-img" style={{ width: size, height: size }} draggable={false} />
+      <img src={MASCOT_IMAGES[mood]} alt="" className="mascot-inline-img" draggable={false} />
       {text && <div className="mascot-inline-bubble">{text}</div>}
     </div>
   );

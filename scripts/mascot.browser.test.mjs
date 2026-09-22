@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
 function mascotSize(viewport) {
-  return viewport.height <= 480 ? 96 : viewport.width <= 480 ? 112 : 144;
+  return viewport.height <= 480 ? 112 : viewport.width <= 480 ? 156 : 208;
 }
 
 async function expectBubbleToFit(page) {
@@ -58,9 +58,16 @@ test("full-size character and aligned bubble fit every onboarding step", async (
   // A dismissed large mascot must not leave an invisible button over the app.
   await expect(avatar).toBeHidden();
   const viewport = page.viewportSize();
-  const interceptsTap = await page.evaluate(({ width, height }) =>
-    Boolean(document.elementFromPoint(width - 60, height - 130)?.closest(".mascot-wrap")), viewport);
-  expect(interceptsTap).toBe(false);
+  const tapsMascot = () =>
+    page.evaluate(
+      ({ width, height }) =>
+        Boolean(document.elementFromPoint(width - 60, height - 130)?.closest(".mascot-wrap")),
+      viewport
+    );
+  // elementFromPoint hit-tests the last committed frame, which can lag the
+  // visibility flip by a frame — poll until the settled state instead of
+  // asserting one frame too early.
+  await expect.poll(tapsMascot, { timeout: 2000 }).toBe(false);
 });
 
 test("peeking remains half tucked away and opens a fully visible bubble", async ({ page }) => {
