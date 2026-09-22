@@ -3297,7 +3297,7 @@ function ReviewPage({
         </button>
       ) : (
         <div className="card-elevated" style={{ textAlign: "center", padding: "24px 20px", margin: "16px 0 10px" }}>
-          <MascotInline mood="celebrate" text={counts.tracked === 0 ? "Review a deck once and it joins the rotation!" : "All caught up! Come back later."} size={84} />
+          <MascotInline mood="celebrate" text={counts.tracked === 0 ? "Review a deck once and it joins the rotation!" : "All caught up! Come back later."} />
           <p style={{ margin: "14px 0 0", fontWeight: 800, fontSize: 16 }}>Nothing due right now</p>
           <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--text-muted)", lineHeight: 1.5 }}>
             {counts.tracked === 0
@@ -5229,7 +5229,7 @@ function SubjectPage({
         </div>
       ) : sessions.length === 0 ? (
         <div style={{ textAlign: "center", padding: "32px 20px" }}>
-          <MascotInline mood="idle" text={`"${subject.name}" is waiting for its first set!`} size={84} />
+          <MascotInline mood="idle" text={`"${subject.name}" is waiting for its first set!`} />
           <h3 style={{ fontSize: 18, fontWeight: 700, margin: "16px 0 8px" }}>Nothing in “{subject.name}” yet</h3>
           <p style={{ color: "var(--text-muted)", fontSize: 14, margin: "0 0 16px" }}>
             Create a set straight into this subject — or move one in from All Sets with the folder button.
@@ -5613,7 +5613,7 @@ function SessionsPage({
         </div>
       ) : sessions.length === 0 && subjects.length === 0 ? (
         <div style={{ textAlign: "center", padding: "32px 20px" }}>
-          <MascotInline mood="point" text="No sets yet — let's make your first one!" size={84} />
+          <MascotInline mood="point" text="No sets yet — let's make your first one!" />
           <h3 style={{ fontSize: 18, fontWeight: 700, margin: "16px 0 8px" }}>No study sets yet!</h3>
           <p style={{ color: "var(--text-muted)", fontSize: 14, margin: "0 0 16px", lineHeight: 1.6 }}>
             Upload a PDF or image to create your first flashcard set — or build one yourself, card by card.

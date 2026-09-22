@@ -73,9 +73,9 @@ export default function HamsterPreview() {
   ];
 
   return (
-    <div style={{ padding: "28px 16px", maxWidth: 520, margin: "0 auto" }}>
-      <h1 style={{ fontSize: 20, fontWeight: 800, margin: "0 0 4px" }}>Nibbles 🐹 playground</h1>
-      <p style={{ fontSize: 13.5, color: "var(--text-muted)", margin: "0 0 16px", lineHeight: 1.55 }}>
+    <div className="preview-shell">
+      <h1 className="preview-title">Nibbles 🐹 playground</h1>
+      <p className="preview-lede">
         This page previews every mascot moment without signing in. Tap a button and watch the
         bottom-right corner — every study-mode finish has its own victory animation, and 90%+
         makes him nibble a sunflower seed under a ⭐ burst. He also cheers mid-run streaks,
@@ -83,38 +83,23 @@ export default function HamsterPreview() {
         he dozes to wake him up.
       </p>
 
-      <label style={{ display: "block", fontSize: 12, fontWeight: 800, color: "var(--text-muted)", marginBottom: 6 }}>
+      <label className="preview-label" htmlFor="preview-name">
         Name used in greetings
       </label>
       <input
+        id="preview-name"
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="Your first name"
-        style={{
-          width: "100%",
-          padding: "10px 12px",
-          borderRadius: 14,
-          border: "2px solid #ffffff",
-          background: "#e9efff",
-          fontSize: 14,
-          fontWeight: 600,
-          fontFamily: "inherit",
-          color: "var(--text)",
-          outline: "none",
-          marginBottom: 16,
-        }}
+        className="preview-name-input"
       />
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="preview-demos">
         {demos.map((demo) => (
-          <button key={demo.label} className="btn btn-secondary" style={{ justifyContent: "flex-start", height: "auto", padding: "10px 14px" }} onClick={demo.run}>
-            <span style={{ textAlign: "left" }}>
-              <span style={{ display: "block", fontWeight: 800 }}>{demo.label}</span>
-              {demo.hint && (
-                <span style={{ display: "block", fontSize: 11.5, fontWeight: 600, color: "var(--text-muted)", marginTop: 2 }}>
-                  {demo.hint}
-                </span>
-              )}
+          <button key={demo.label} className="btn btn-secondary demo-btn" onClick={demo.run}>
+            <span className="demo-btn-copy">
+              <span className="demo-btn-title">{demo.label}</span>
+              {demo.hint && <span className="demo-btn-hint">{demo.hint}</span>}
             </span>
           </button>
         ))}
