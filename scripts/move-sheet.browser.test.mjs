@@ -24,12 +24,25 @@ for (const folderCount of [1, 30]) {
       } else if (path === "/api/sessions") {
         json = { sessions: [session] };
       } else if (path === "/api/sessions/1" && route.request().method() === "PATCH") {
-        session.subjectId = route.request().postDataJSON().subjectId;
+        const previousSubjectId = session.subjectId;
+        const nextSubjectId = route.request().postDataJSON().subjectId;
+        const previousSubject = subjects.find((subject) => subject.id === previousSubjectId);
+        const nextSubject = subjects.find((subject) => subject.id === nextSubjectId);
+        if (previousSubject) previousSubject.setCount = Math.max(0, previousSubject.setCount - 1);
+        if (nextSubject) nextSubject.setCount += 1;
+        session.subjectId = nextSubjectId;
         json = { success: true, session };
       } else if (path === "/api/profile") {
         json = { course: "Biology" };
       } else if (path === "/api/review") {
         json = { counts: { due: 0 }, cards: [] };
+      } else if (path === "/api/notifications") {
+        json = {
+          notifications: [],
+          unread: 0,
+          preferences: { enabled: false, reminderTime: "18:00", timeZone: "UTC" },
+          push: { configured: false, publicKey: null, deviceCount: 0 },
+        };
       }
       await route.fulfill({ json });
     });
@@ -42,6 +55,9 @@ for (const folderCount of [1, 30]) {
     await opener.click();
     const dialog = page.getByRole("dialog", { name: "Move Biology revision to a subject" });
     await expect(dialog).toBeVisible();
+    // Let the slide-up finish before measuring scroll positions on short
+    // landscape viewports; the animation itself can move the document.
+    await dialog.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
     const save = dialog.getByRole("button", { name: "Move here", exact: true });
     await expect(save).toBeDisabled();
 
@@ -89,12 +105,9 @@ for (const folderCount of [1, 30]) {
       html: document.documentElement.style.overflow,
       body: document.body.style.overflow,
     }))).toEqual({ html: "", body: "" });
-
-    // The backdrop also dismisses the sheet and releases the scroll lock.
-    await opener.click();
-    await expect(dialog).toBeVisible();
-    await page.mouse.click(5, 5);
-    await expect(dialog).toBeHidden();
-    await expect(page.getByRole("button", { name: "My Sets", exact: true })).toBeEnabled();
+    await expect(opener).toBeHidden();
+    await page.getByRole("button", { name: "Clear search", exact: true }).click();
+    await expect(page.getByRole("button", { name: `Subject ${folderCount} 1 set`, exact: true })).toBeVisible();
+    await expect(page.getByText("No unfiled sets — your sets are organised into the subject folders above.", { exact: true })).toBeVisible();
   });
 }
