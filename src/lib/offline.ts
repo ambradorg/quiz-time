@@ -404,6 +404,29 @@ export async function saveDeck(deck: OfflineDeck): Promise<void> {
   }
 }
 
+/**
+ * Keep the subject folder of saved deck snapshots in sync with the server, so
+ * a set moved into (or out of) a subject doesn't reappear in "All Sets" when
+ * the list is rebuilt from this device. Pass a map of deckId → subjectId.
+ */
+export async function syncDeckSubjects(
+  subjectsById: Map<number, number | null>
+): Promise<void> {
+  if (!isBrowser() || subjectsById.size === 0) return;
+  try {
+    const backend = await getOfflineBackend();
+    const decks = await backend.getAll<OfflineDeck>(STORE_DECKS);
+    for (const deck of decks) {
+      if (!subjectsById.has(deck.id)) continue;
+      const subjectId = subjectsById.get(deck.id) ?? null;
+      if ((deck.subjectId ?? null) === subjectId) continue;
+      await backend.put(STORE_DECKS, { ...deck, subjectId });
+    }
+  } catch {
+    // Ignore — the online list is unaffected.
+  }
+}
+
 export async function deleteDeckSnapshot(id: number): Promise<void> {
   if (!isBrowser()) return;
   try {
