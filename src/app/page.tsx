@@ -22,6 +22,7 @@ import {
   countDueNow,
   fetchJson,
   forgetDeckOffline,
+  syncDeckSubjects,
   formatSavedAgo,
   HttpError,
   isProbablyOnline,
@@ -5383,6 +5384,10 @@ function SessionsPage({
         if (signal?.aborted) return;
         setSessions(data.sessions || []);
         setFromCache(false);
+        // Keep offline snapshots filed in the same subject as the server.
+        await syncDeckSubjects(
+          new Map((data.sessions || []).map((s) => [s.id, s.subjectId ?? null]))
+        );
         if (subjectsResult) {
           setSubjects(subjectsResult);
           cacheSubjectsLocally(subjectsResult);
@@ -5753,6 +5758,7 @@ function SessionsPage({
           onClose={() => setMoveSheet(null)}
           onMoved={(subjectId) => {
             const previousSubjectId = moveSheet.subjectId ?? null;
+            void syncDeckSubjects(new Map([[moveSheet.id, subjectId]]));
             setSessions((prev) => prev.map((session) =>
               session.id === moveSheet.id ? { ...session, subjectId } : session
             ));
